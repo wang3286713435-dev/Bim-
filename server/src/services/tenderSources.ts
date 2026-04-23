@@ -125,6 +125,34 @@ function isLowValueGzebRecord(title: string, content: string): boolean {
   ].some(keyword => text.includes(keyword));
 }
 
+function assessGzebRecordReliability(record: GzebRecord, title: string, content: string, url: string): { trusted: boolean; reason?: string } {
+  const combined = `${title}\n${content}`;
+
+  if (!url) {
+    return { trusted: false, reason: '缺少详情链接' };
+  }
+
+  if (/show-bid-opening\/list|show-bid-result|\/results?\//i.test(url)) {
+    return { trusted: false, reason: '结果页跳转链接' };
+  }
+
+  if (/中标|成交|结果公告|候选人公示|合同公告|合同信息公开|终止公告|流标|废标/.test(title)) {
+    return { trusted: false, reason: '结果类公告' };
+  }
+
+  const hasAnnouncementCue = /招标公告|采购公告|竞价公告|资格预审|比选公告|遴选公告/.test(combined);
+  const hasBusinessCue = /BIM|建筑信息模型|智慧建造|数字孪生|CIM/i.test(combined);
+  if (!hasAnnouncementCue && !hasBusinessCue) {
+    return { trusted: false, reason: '公告特征不足' };
+  }
+
+  if (record.categorynum?.startsWith('002001004')) {
+    return { trusted: false, reason: '高风险目录' };
+  }
+
+  return { trusted: true };
+}
+
 function buildGzebQueryVariants(query: string): string[] {
   const normalized = normalizeWhitespace(query);
   if (!normalized) return [];
@@ -493,6 +521,8 @@ export async function searchGzebpubservice(query: string, limit = 20): Promise<S
 
           const url = record.linkurl ? new URL(record.linkurl, 'http://www.gzebpubservice.cn/').toString() : '';
           if (!isHealthyGzebUrl(url, record.categorynum)) continue;
+          const reliability = assessGzebRecordReliability(record, title, content, url);
+          if (!reliability.trusted) continue;
           if (!(await isReachableDetailUrl(url))) continue;
 
           const candidate = toTenderResult({
@@ -834,6 +864,7 @@ function isHealthyGzebUrl(url: string, categorynum?: string): boolean {
   if (!url) return false;
   // 这些目录下的静态详情页在现网经常直接 404，先过滤掉，避免前端展示坏链接。
   if (categorynum?.startsWith('002001004')) return false;
+  if (/show-bid-opening\/list|show-bid-result/i.test(url)) return false;
   return true;
 }
 

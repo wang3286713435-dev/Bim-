@@ -15,6 +15,8 @@ export interface TenderSourceAdapter {
   platform: string;
   homepage: string;
   priority: number;
+  riskLevel: 'low' | 'medium' | 'high';
+  probeProfile: 'light' | 'standard' | 'layered';
   search: (query: string, limit?: number) => Promise<SearchResult[]>;
 }
 
@@ -101,6 +103,8 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     platform: '深圳公共资源交易中心',
     homepage: 'https://www.szggzy.com/globalSearch/index.html',
     priority: 1,
+    riskLevel: 'medium',
+    probeProfile: 'standard',
     search: searchSzggzy
   },
   {
@@ -109,6 +113,8 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     platform: '深圳阳光采购平台',
     homepage: 'https://www.szygcgpt.com/ygcg/purchaseInfoList',
     priority: 2,
+    riskLevel: 'low',
+    probeProfile: 'light',
     search: searchSzygcgpt
   },
   {
@@ -117,6 +123,8 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     platform: '广东省公共资源交易平台',
     homepage: 'https://ygp.gdzwfw.gov.cn/#/44/search/jygg',
     priority: 3,
+    riskLevel: 'medium',
+    probeProfile: 'standard',
     search: searchGuangdongYgp
   },
   {
@@ -125,6 +133,8 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     platform: '广州公共资源交易公共服务平台',
     homepage: 'http://www.gzebpubservice.cn/fulltext_searching.html',
     priority: 4,
+    riskLevel: 'high',
+    probeProfile: 'layered',
     search: searchGzebpubservice
   }
 ];
