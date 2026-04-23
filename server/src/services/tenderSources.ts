@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { SearchResult } from '../types.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
+import { axiosWithSourceProxy } from './proxyPool.js';
 
 class RateLimiter {
   private lastRequestTime = 0;
@@ -189,9 +190,10 @@ function resolveSzggzyUrl(item: SzggzyItem): string {
 }
 
 async function fetchSzggzyItems(query: string, limit = 20): Promise<SzggzyItem[]> {
-  const response = await axios.post<SzggzyResponse>(
-    'https://www.szggzy.com/cms/api/v1/trade/es/content/page',
-    {
+  const response = await axiosWithSourceProxy<SzggzyResponse>('szggzy', {
+    method: 'post',
+    url: 'https://www.szggzy.com/cms/api/v1/trade/es/content/page',
+    data: {
       keyword: query,
       page: 0,
       size: limit,
@@ -203,15 +205,13 @@ async function fetchSzggzyItems(query: string, limit = 20): Promise<SzggzyItem[]
       orderBy: 0,
       id: null
     },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-        Referer: 'https://www.szggzy.com/globalSearch/index.html'
-      },
-      timeout: 20000
-    }
-  );
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+      Referer: 'https://www.szggzy.com/globalSearch/index.html'
+    },
+    timeout: 20000
+  });
 
   return response.data.data?.content ?? [];
 }
@@ -549,7 +549,9 @@ async function fetchSzygcgptDetail(item: NonNullable<NonNullable<SzygcgptRespons
     : 'https://www.szygcgpt.com/app/home/detail.do';
 
   try {
-    const response = await axios.get<SzygcgptDetailResponse>(endpoint, {
+    const response = await axiosWithSourceProxy<SzygcgptDetailResponse>('szygcgpt', {
+      method: 'get',
+      url: endpoint,
       params: Object.fromEntries(params),
       headers: {
         Accept: 'application/json',
@@ -574,22 +576,21 @@ export async function searchSzygcgpt(query: string, limit = 20): Promise<SearchR
     const seen = new Set<string>();
 
     for (let page = 1; page <= 5 && results.length < limit; page += 1) {
-      const response = await axios.post<SzygcgptResponse>(
-        'https://www.szygcgpt.com/app/home/pageGGList.do',
-        {
+      const response = await axiosWithSourceProxy<SzygcgptResponse>('szygcgpt', {
+        method: 'post',
+        url: 'https://www.szygcgpt.com/app/home/pageGGList.do',
+        data: {
           page,
           rows,
           keyWords: query
         },
-        {
-          headers: {
-            'Content-Type': 'application/json;charset=UTF-8',
-            'User-Agent': 'Mozilla/5.0',
-            Referer: 'https://www.szygcgpt.com/ygcg/purchaseInfoList'
-          },
-          timeout: 20000
-        }
-      );
+        headers: {
+          'Content-Type': 'application/json;charset=UTF-8',
+          'User-Agent': 'Mozilla/5.0',
+          Referer: 'https://www.szygcgpt.com/ygcg/purchaseInfoList'
+        },
+        timeout: 20000
+      });
 
       const items = response.data.data?.list ?? [];
       if (items.length === 0) break;
@@ -709,7 +710,9 @@ async function isReachableDetailUrl(url: string): Promise<boolean> {
   }
 
   try {
-    const response = await axios.get(url, {
+    const response = await axiosWithSourceProxy<string>('gzebpubservice', {
+      method: 'get',
+      url,
       timeout: 12000,
       maxRedirects: 5,
       validateStatus: status => status >= 200 && status < 400,
@@ -749,18 +752,17 @@ async function resolveGuangdongNodeId(item: GuangdongItem, tradingType: string, 
   };
 
   try {
-    const singleNode = await axios.get<{ data?: string | null }>(
-      'https://ygp.gdzwfw.gov.cn/ggzy-portal/center/apis/trading-notice/new/singleNode',
-      {
-        params,
-        timeout: 15000,
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0',
-          Referer: 'https://ygp.gdzwfw.gov.cn/'
-        }
+    const singleNode = await axiosWithSourceProxy<{ data?: string | null }>('guangdong', {
+      method: 'get',
+      url: 'https://ygp.gdzwfw.gov.cn/ggzy-portal/center/apis/trading-notice/new/singleNode',
+      params,
+      timeout: 15000,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'https://ygp.gdzwfw.gov.cn/'
       }
-    );
+    });
     const directNodeId = normalizeWhitespace(singleNode.data?.data);
     if (directNodeId) return directNodeId;
   } catch (error) {
@@ -768,18 +770,17 @@ async function resolveGuangdongNodeId(item: GuangdongItem, tradingType: string, 
   }
 
   try {
-    const nodeList = await axios.get<{ data?: GuangdongNodeLookupResult[] }>(
-      'https://ygp.gdzwfw.gov.cn/ggzy-portal/center/apis/trading-notice/new/nodeList',
-      {
-        params,
-        timeout: 15000,
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0',
-          Referer: 'https://ygp.gdzwfw.gov.cn/'
-        }
+    const nodeList = await axiosWithSourceProxy<{ data?: GuangdongNodeLookupResult[] }>('guangdong', {
+      method: 'get',
+      url: 'https://ygp.gdzwfw.gov.cn/ggzy-portal/center/apis/trading-notice/new/nodeList',
+      params,
+      timeout: 15000,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'https://ygp.gdzwfw.gov.cn/'
       }
-    );
+    });
     const firstNodeId = normalizeWhitespace(nodeList.data?.data?.[0]?.nodeId);
     return firstNodeId || null;
   } catch (error) {
@@ -853,9 +854,10 @@ export async function searchGuangdongYgp(query: string, limit = 20): Promise<Sea
     for (let pageNo = 1; pageNo <= runtimeConfig.guangdongMaxPages && results.length < limit; pageNo += 1) {
       let response: { data: GuangdongResponse };
       try {
-        response = await axios.post<GuangdongResponse>(
-          'https://ygp.gdzwfw.gov.cn/ggzy-portal/search/v2/items',
-          {
+        response = await axiosWithSourceProxy<GuangdongResponse>('guangdong', {
+          method: 'post',
+          url: 'https://ygp.gdzwfw.gov.cn/ggzy-portal/search/v2/items',
+          data: {
             keyword: query,
             pageNo,
             pageSize,
@@ -867,16 +869,14 @@ export async function searchGuangdongYgp(query: string, limit = 20): Promise<Sea
             projectType: '',
             dateRange: ''
           },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-              'User-Agent': 'Mozilla/5.0',
-              Referer: 'https://ygp.gdzwfw.gov.cn/'
-            },
-            timeout: 20000
-          }
-        );
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'User-Agent': 'Mozilla/5.0',
+            Referer: 'https://ygp.gdzwfw.gov.cn/'
+          },
+          timeout: 20000
+        });
       } catch (error) {
         const status = axios.isAxiosError(error) ? error.response?.status : undefined;
         console.warn(`Guangdong YGP page ${pageNo} failed for "${query}"${status ? ` (status ${status})` : ''}`);

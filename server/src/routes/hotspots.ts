@@ -14,6 +14,7 @@ import {
   getDetailEnrichmentQueueState,
   getTenderFieldCompletenessScore
 } from '../services/tenderDetailEnrichment.js';
+import { getProxyPoolSnapshot } from '../services/proxyPool.js';
 
 const router = Router();
 const TENDER_SOURCES = TENDER_SOURCE_IDS;
@@ -352,7 +353,9 @@ router.get('/ops/summary', async (req, res) => {
         select: {
           sourceId: true,
           runId: true,
-          ok: true
+          ok: true,
+          errorMessage: true,
+          resultCount: true
         }
       })
     ]);
@@ -360,11 +363,37 @@ router.get('/ops/summary', async (req, res) => {
     const sourceHealth = await probeTenderSources('BIM', 1);
     const probeFailureSummary24h: Record<string, number> = {};
     const runFailureSummary24h: Record<string, number> = {};
+    const failureReasons24h: Record<string, Array<{ reason: string; count: number }>> = {};
     const sourceRunState = new Map<string, { sourceId: string; hasFailure: boolean }>();
+
+    function normalizeFailureReason(errorMessage?: string | null, resultCount?: number): string {
+      const text = (errorMessage || '').trim();
+      if (!text) {
+        if ((resultCount ?? 0) === 0) return '空结果 / 疑似被拦截';
+        return '未知失败';
+      }
+      if (/403|forbidden|waf/i.test(text)) return '403 / WAF 拦截';
+      if (/502|bad gateway/i.test(text)) return '502 网关错误';
+      if (/429|too many requests|rate limit/i.test(text)) return '429 限流';
+      if (/timeout|timed out|ETIMEDOUT/i.test(text)) return '请求超时';
+      if (/circuit open/i.test(text)) return '熔断冷却中';
+      if (/ECONNRESET|socket hang up/i.test(text)) return '连接被重置';
+      if (/ENOTFOUND|EAI_AGAIN|DNS/i.test(text)) return 'DNS / 解析失败';
+      return text.slice(0, 48);
+    }
 
     for (const probe of recentSourceProbes) {
       if (!probe.ok) {
         probeFailureSummary24h[probe.sourceId] = (probeFailureSummary24h[probe.sourceId] || 0) + 1;
+        const normalizedReason = normalizeFailureReason(probe.errorMessage, probe.resultCount);
+        const bucket = failureReasons24h[probe.sourceId] || [];
+        const existing = bucket.find((item) => item.reason === normalizedReason);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          bucket.push({ reason: normalizedReason, count: 1 });
+        }
+        failureReasons24h[probe.sourceId] = bucket;
       }
 
       const key = `${probe.runId}:${probe.sourceId}`;
@@ -385,6 +414,12 @@ router.get('/ops/summary', async (req, res) => {
       runFailureSummary24h[item.sourceId] = (runFailureSummary24h[item.sourceId] || 0) + 1;
     }
 
+    for (const sourceId of Object.keys(failureReasons24h)) {
+      failureReasons24h[sourceId] = failureReasons24h[sourceId]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3);
+    }
+
     res.json({
       stats: {
         totalHotspots,
@@ -392,11 +427,13 @@ router.get('/ops/summary', async (req, res) => {
       },
       runtimeConfig,
       sourceHealth,
+      proxyPool: getProxyPoolSnapshot(),
       recentRuns,
       latestRun,
       failureSummary24h: probeFailureSummary24h,
       probeFailureSummary24h,
-      runFailureSummary24h
+      runFailureSummary24h,
+      failureReasons24h
     });
   } catch (error) {
     console.error('Error fetching ops summary:', error);

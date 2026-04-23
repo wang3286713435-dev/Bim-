@@ -1036,6 +1036,22 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
               <div className="flex items-center justify-between"><span>上次成功</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{source.lastSuccessAt ? relativeTime(source.lastSuccessAt) : '暂无'}</span></div>
             </div>
             {source.sampleTitle && <p className="mt-4 line-clamp-2 text-xs leading-5 text-slate-500">样例：{source.sampleTitle}</p>}
+            {(summary.failureReasons24h[source.id]?.length ?? 0) > 0 && (
+              <div className={cn(
+                'mt-3 rounded-2xl border px-3 py-3 text-xs',
+                isLight ? 'border-amber-200 bg-amber-50/80 text-amber-800' : 'border-amber-400/15 bg-amber-500/8 text-amber-200/90'
+              )}>
+                <p className="mb-2 font-medium">最近失败原因</p>
+                <div className="space-y-1.5">
+                  {summary.failureReasons24h[source.id].map((item) => (
+                    <div key={`${source.id}-${item.reason}`} className="flex items-center justify-between gap-3">
+                      <span className="line-clamp-1">{item.reason}</span>
+                      <span className="shrink-0">{item.count} 次</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {source.error && <p className={cn('mt-2 line-clamp-2 text-xs leading-5', isLight ? 'text-amber-700' : 'text-amber-200/80')}>最近错误：{source.error}</p>}
           </div>
         ))}
@@ -1356,6 +1372,13 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
   ];
   const totalProbeFailures = summary ? Object.values(summary.probeFailureSummary24h || summary.failureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
   const totalRunFailures = summary ? Object.values(summary.runFailureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
+  const proxyPool = summary?.proxyPool || [];
+  const topFailureReasons = summary
+    ? Object.entries(summary.failureReasons24h || {})
+        .flatMap(([sourceId, items]) => items.map((item) => ({ sourceId, ...item })))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 4)
+    : [];
 
   return (
     <section className={cn(
@@ -1417,6 +1440,42 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
         {latestRun
           ? `最近一轮扫描原始抓取 ${latestRun.totalRaw} 条，去重后 ${latestRun.totalUnique} 条，最终入库 ${latestRun.totalSaved} 条。${health?.hotspotCheckQueue.lastError ? `最近错误：${health.hotspotCheckQueue.lastError}` : '当前未发现新的队列错误。'}`
           : '系统正在等待下一轮抓取。这里会持续刷新最近一次抓取、飞书投递和后端健康状态。'}
+      </div>
+
+      {topFailureReasons.length > 0 && (
+        <div className={cn(
+          'mt-3 rounded-[20px] border p-4 text-xs leading-6',
+          isLight ? 'border-amber-200 bg-amber-50/70 text-amber-800' : 'border-amber-400/10 bg-amber-500/8 text-amber-100/85'
+        )}>
+          <p className="mb-2 font-medium">最近主要失败原因</p>
+          <div className="space-y-1.5">
+            {topFailureReasons.map((item) => (
+              <div key={`${item.sourceId}-${item.reason}`} className="flex items-center justify-between gap-3">
+                <span>{getSourceLabel(item.sourceId)} · {item.reason}</span>
+                <span className="shrink-0">{item.count} 次</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={cn(
+        'mt-3 rounded-[20px] border p-4 text-xs leading-6',
+        isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
+      )}>
+        <p className="mb-2 font-medium">出口池</p>
+        {proxyPool.length > 0 ? (
+          <div className="space-y-1.5">
+            {proxyPool.map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-3">
+                <span>{item.id} · {item.host}:{item.port}</span>
+                <span>{item.failureCount > 0 ? `失败 ${item.failureCount}` : '可用'}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>当前未配置多出口代理，默认使用主机本机出口。</p>
+        )}
       </div>
     </section>
   );

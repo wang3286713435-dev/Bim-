@@ -168,11 +168,23 @@ export interface OpsSummary {
   };
   runtimeConfig: RuntimeConfig;
   sourceHealth: SourceHealthProbe[];
+  proxyPool?: Array<{
+    id: string;
+    host: string;
+    port: number;
+    enabled: boolean;
+    sources: string[];
+    failureCount: number;
+    lastError?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+  }>;
   recentRuns: CrawlRun[];
   latestRun: CrawlRun | null;
   failureSummary24h: Record<string, number>;
   probeFailureSummary24h: Record<string, number>;
   runFailureSummary24h: Record<string, number>;
+  failureReasons24h: Record<string, Array<{ reason: string; count: number }>>;
 }
 
 export interface DetailEnrichmentStatusItem {
