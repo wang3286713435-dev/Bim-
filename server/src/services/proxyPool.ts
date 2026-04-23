@@ -13,15 +13,17 @@ type ProxyPoolEntry = {
 };
 
 type ProxyRuntimeState = {
-  cursor: number;
   lastError?: string;
   lastSuccessAt?: number;
   lastFailureAt?: number;
   failureCount: number;
+  consecutiveFailures: number;
+  cooldownUntil?: number;
 };
 
 const proxyRuntime = new Map<string, ProxyRuntimeState>();
-const sourceCursor = new Map<TenderSourceId, number>();
+const DEFAULT_PROXY_FAILURE_THRESHOLD = Number.parseInt(process.env.TENDER_PROXY_FAILURE_THRESHOLD || '2', 10);
+const DEFAULT_PROXY_FAILURE_COOLDOWN_MS = Number.parseInt(process.env.TENDER_PROXY_FAILURE_COOLDOWN_MS || '300000', 10);
 
 function parseProxyPool(): ProxyPoolEntry[] {
   const raw = process.env.TENDER_PROXY_POOL?.trim();
@@ -56,8 +58,8 @@ function getProxyState(id: string): ProxyRuntimeState {
   const existing = proxyRuntime.get(id);
   if (existing) return existing;
   const initial: ProxyRuntimeState = {
-    cursor: 0,
     failureCount: 0,
+    consecutiveFailures: 0,
   };
   proxyRuntime.set(id, initial);
   return initial;
@@ -70,21 +72,52 @@ function getCandidates(sourceId: TenderSourceId): ProxyPoolEntry[] {
   return pool.filter((entry) => entry.sources.includes('default'));
 }
 
+function isCoolingDown(state: ProxyRuntimeState): boolean {
+  if (!state.cooldownUntil) return false;
+  if (Date.now() >= state.cooldownUntil) {
+    state.cooldownUntil = undefined;
+    state.consecutiveFailures = 0;
+    return false;
+  }
+  return true;
+}
+
+function compareProxyHealth(a: ProxyPoolEntry, b: ProxyPoolEntry): number {
+  const stateA = getProxyState(a.id);
+  const stateB = getProxyState(b.id);
+  const coolingA = isCoolingDown(stateA);
+  const coolingB = isCoolingDown(stateB);
+
+  if (coolingA !== coolingB) return coolingA ? 1 : -1;
+  if (stateA.consecutiveFailures !== stateB.consecutiveFailures) return stateA.consecutiveFailures - stateB.consecutiveFailures;
+  if (stateA.failureCount !== stateB.failureCount) return stateA.failureCount - stateB.failureCount;
+
+  const successA = stateA.lastSuccessAt ?? 0;
+  const successB = stateB.lastSuccessAt ?? 0;
+  if (successA !== successB) return successB - successA;
+
+  const failureA = stateA.lastFailureAt ?? 0;
+  const failureB = stateB.lastFailureAt ?? 0;
+  if (failureA !== failureB) return failureA - failureB;
+
+  return a.id.localeCompare(b.id);
+}
+
 function pickProxy(sourceId: TenderSourceId): ProxyPoolEntry | null {
   const candidates = getCandidates(sourceId);
   if (candidates.length === 0) return null;
 
-  const cursor = sourceCursor.get(sourceId) ?? 0;
-  const index = cursor % candidates.length;
-  sourceCursor.set(sourceId, (cursor + 1) % candidates.length);
-  return candidates[index] ?? null;
+  const healthyFirst = [...candidates].sort(compareProxyHealth);
+  const available = healthyFirst.filter((entry) => !isCoolingDown(getProxyState(entry.id)));
+  return (available[0] ?? healthyFirst[0]) || null;
 }
 
 function markProxySuccess(proxyId: string): void {
   const state = getProxyState(proxyId);
   state.lastSuccessAt = Date.now();
   state.lastError = undefined;
-  state.failureCount = 0;
+  state.consecutiveFailures = 0;
+  state.cooldownUntil = undefined;
 }
 
 function markProxyFailure(proxyId: string, error: string): void {
@@ -92,6 +125,10 @@ function markProxyFailure(proxyId: string, error: string): void {
   state.lastFailureAt = Date.now();
   state.lastError = error;
   state.failureCount += 1;
+  state.consecutiveFailures += 1;
+  if (state.consecutiveFailures >= Math.max(1, DEFAULT_PROXY_FAILURE_THRESHOLD)) {
+    state.cooldownUntil = Date.now() + Math.max(5000, DEFAULT_PROXY_FAILURE_COOLDOWN_MS);
+  }
 }
 
 function buildAxiosProxyConfig(proxy: ProxyPoolEntry): NonNullable<AxiosRequestConfig['proxy']> {
@@ -135,8 +172,9 @@ export async function axiosWithSourceProxy<T>(
 }
 
 export function getProxyPoolSnapshot() {
-  return parseProxyPool().map((entry) => {
+  return parseProxyPool().sort(compareProxyHealth).map((entry) => {
     const state = getProxyState(entry.id);
+    const coolingDown = isCoolingDown(state);
     return {
       id: entry.id,
       host: entry.host,
@@ -144,6 +182,9 @@ export function getProxyPoolSnapshot() {
       enabled: entry.enabled,
       sources: entry.sources,
       failureCount: state.failureCount,
+      consecutiveFailures: state.consecutiveFailures,
+      coolingDown,
+      cooldownRemainingMs: coolingDown && state.cooldownUntil ? Math.max(0, state.cooldownUntil - Date.now()) : 0,
       lastError: state.lastError,
       lastSuccessAt: state.lastSuccessAt ? new Date(state.lastSuccessAt).toISOString() : undefined,
       lastFailureAt: state.lastFailureAt ? new Date(state.lastFailureAt).toISOString() : undefined,
