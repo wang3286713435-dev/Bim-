@@ -164,6 +164,58 @@ function buildRuleBasedTenderAnalysis(content: string, matchResult: { matched: b
   };
 }
 
+function cleanContentForAI(content: string): string {
+  const normalized = content
+    .replace(/\r/g, '\n')
+    .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
+    .replace(/\[[^\]]+]\([^)]+\)/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/---+\s*Detail Enrichment[\s\S]*$/i, ' ')
+    .replace(/---+/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const usefulLines = normalized
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => line.length >= 4)
+    .filter(line => !/^(首页|当前位置|返回列表|点击查看|附件下载|打印|关闭窗口|分享|收藏)$/.test(line))
+    .filter(line => !/^https?:\/\//i.test(line));
+
+  const priorityLines: string[] = [];
+  const secondaryLines: string[] = [];
+
+  for (const line of usefulLines) {
+    if (/(BIM|建筑信息模型|智慧建造|项目名称|项目概况|项目编号|采购单位|招标人|招标单位|采购人|预算|控制价|最高限价|联系人|联系电话|联系方式|截止|开标|投标|服务范围|采购需求|资格要求|资质要求|地区|地点|地址)/i.test(line)) {
+      priorityLines.push(line);
+    } else if (line.length <= 120) {
+      secondaryLines.push(line);
+    }
+  }
+
+  const merged = [...new Set([...priorityLines, ...secondaryLines])];
+  return merged.join('\n').slice(0, 1600);
+}
+
+function buildAIInputVariants(content: string): string[] {
+  const cleaned = cleanContentForAI(content);
+  if (!cleaned) {
+    return [content.slice(0, 1200)];
+  }
+
+  const variants = [
+    cleaned.slice(0, 1400),
+    cleaned.slice(0, 900)
+  ].filter(Boolean);
+
+  return [...new Set(variants)];
+}
+
 export async function analyzeContent(content: string, keyword: string, preMatchResult?: { matched: boolean; matchedTerms: string[] }): Promise<AIAnalysis> {
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
@@ -175,27 +227,39 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
 
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
-    const parsed = await generateStructuredJson<AIAnalysis>([
-        {
-          role: 'system',
-          content: prompt
-        },
-        {
-          role: 'user',
-          content: content.slice(0, 2000) // 限制内容长度
-        }
-      ], { temperature: 0.2, maxTokens: 500 });
+    const variants = buildAIInputVariants(content);
+    let lastError: unknown;
 
-    return {
-      isReal: Boolean(parsed.isReal),
-      relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
-      relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
-      keywordMentioned: Boolean(parsed.keywordMentioned),
-      importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance)
-        ? parsed.importance
-        : 'low',
-      summary: String(parsed.summary || '').slice(0, 150)
-    };
+    for (let i = 0; i < variants.length; i++) {
+      try {
+        const parsed = await generateStructuredJson<AIAnalysis>([
+            {
+              role: 'system',
+              content: prompt
+            },
+            {
+              role: 'user',
+              content: variants[i]
+            }
+          ], { temperature: 0.2, maxTokens: 500 });
+
+        return {
+          isReal: Boolean(parsed.isReal),
+          relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
+          relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
+          keywordMentioned: Boolean(parsed.keywordMentioned),
+          importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance)
+            ? parsed.importance
+            : 'low',
+          summary: String(parsed.summary || '').slice(0, 150)
+        };
+      } catch (error) {
+        lastError = error;
+        console.warn(`AI analysis attempt ${i + 1}/${variants.length} failed, retrying with a shorter payload`);
+      }
+    }
+
+    throw lastError;
   } catch (error) {
     console.error('AI analysis failed:', error);
     return buildRuleBasedTenderAnalysis(content, matchResult, 'AI 分析超时或失败，使用规则投标分析');
