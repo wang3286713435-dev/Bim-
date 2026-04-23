@@ -17,6 +17,11 @@ import {
 } from '../services/tenderSourceRegistry.js';
 import type { SearchResult } from '../types.js';
 
+const AI_ANALYSIS_CONCURRENCY = Math.min(
+  4,
+  Math.max(1, Number.parseInt(process.env.TENDER_AI_CONCURRENCY || '2', 10) || 2)
+);
+
 function filterByFreshness(results: SearchResult[], maxAgeDays: number): SearchResult[] {
   const maxAgeHours = maxAgeDays * 24;
   const cutoff = new Date(Date.now() - maxAgeHours * 3600 * 1000);
@@ -134,20 +139,17 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
       const sortedResults = prioritizeResults(freshResults);
       console.log(`  Total: ${allResults.length} raw → ${uniqueResults.length} unique → ${freshResults.length} fresh (within ${runtimeConfig.maxAgeDays}d)`);
 
-      // 处理结果：招采来源共享配额，避免单次任务过慢
+      // 处理结果：招采来源共享配额，避免单次任务过慢；AI 分析允许有限并行
       let processed = 0;
       let filtered = 0;
 
-      for (const item of sortedResults) {
-        if (processed >= runtimeConfig.resultsPerKeyword) break;
+      async function processResult(item: SearchResult): Promise<'saved' | 'filtered' | 'skipped'> {
         try {
           if (shouldDropLowValueResult(item, runtimeConfig)) {
-            filtered++;
             console.log(`  ⏭ Rule filtered: ${item.title.slice(0, 30)}...`);
-            continue;
+            return 'filtered';
           }
 
-          // 检查是否已存在
           const existing = await prisma.hotspot.findFirst({
             where: {
               url: item.url,
@@ -156,7 +158,7 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
           });
 
           if (existing) {
-            continue;
+            return 'skipped';
           }
 
           const enrichedItem = shouldEnrichWithFirecrawl(item)
@@ -164,33 +166,25 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
             : item;
           const tenderDetail = extractTenderDetailFields(enrichedItem);
 
-          // AI 分析（传入关键词和预匹配结果）
           const fullText = enrichedItem.title + '\n' + enrichedItem.content;
           const preMatch = preMatchKeyword(fullText, expandedKeywords);
           const analysis = await analyzeContent(fullText, keyword.text, preMatch);
 
-          // 只保存真实且相关的招采公告
           if (!analysis.isReal) {
             console.log(`  ❌ Filtered fake/spam: ${item.title.slice(0, 30)}...`);
-            filtered++;
-            continue;
+            return 'filtered';
           }
 
-          // 相关性阈值：50 分以下过滤
           if (analysis.relevance < runtimeConfig.minRelevanceScore) {
             console.log(`  ⏭ Low relevance (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
-            filtered++;
-            continue;
+            return 'filtered';
           }
 
-          // 额外规则：关键词未被提及且相关性不足 65 → 过滤
           if (!analysis.keywordMentioned && analysis.relevance < runtimeConfig.strictKeywordMentionScore) {
             console.log(`  ⏭ Keyword not mentioned & relevance < ${runtimeConfig.strictKeywordMentionScore} (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
-            filtered++;
-            continue;
+            return 'filtered';
           }
 
-          // 保存招采公告
           const hotspot = await prisma.hotspot.create({
             data: {
               title: item.title,
@@ -243,12 +237,9 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
             }
           });
 
-          newHotspotsCount++;
-          processed++;
           console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (${analysis.importance})`);
           enqueueHotspotDetailEnrichment(hotspot.id);
 
-          // 创建通知
           await prisma.notification.create({
             data: {
               type: 'hotspot',
@@ -258,7 +249,6 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
             }
           });
 
-          // WebSocket 通知
           io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
           io.emit('notification', {
             type: 'hotspot',
@@ -268,12 +258,10 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
             importance: hotspot.importance
           });
 
-          // 邮件通知（仅对高重要级别）
           if (['high', 'urgent'].includes(analysis.importance)) {
             await sendHotspotEmail(hotspot);
           }
 
-          // 飞书通知：群机器人卡片 + 可选多维表格写入
           await notifyFeishu({
             ...hotspot,
             publishedAt: hotspot.publishedAt,
@@ -292,9 +280,30 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
             tenderServiceScope: hotspot.tenderServiceScope
           });
 
+          return 'saved';
         } catch (error) {
           console.error(`  Error processing result:`, error);
-          filtered++;
+          return 'filtered';
+        }
+      }
+
+      for (let index = 0; index < sortedResults.length && processed < runtimeConfig.resultsPerKeyword; index += AI_ANALYSIS_CONCURRENCY) {
+        const remainingQuota = runtimeConfig.resultsPerKeyword - processed;
+        const chunk = sortedResults.slice(index, index + Math.min(AI_ANALYSIS_CONCURRENCY, remainingQuota));
+        const outcomes = await Promise.allSettled(chunk.map(processResult));
+
+        for (const outcome of outcomes) {
+          if (outcome.status !== 'fulfilled') {
+            filtered++;
+            continue;
+          }
+
+          if (outcome.value === 'saved') {
+            processed++;
+            newHotspotsCount++;
+          } else if (outcome.value === 'filtered') {
+            filtered++;
+          }
         }
       }
 
