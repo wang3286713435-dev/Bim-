@@ -149,6 +149,14 @@ export async function axiosWithSourceProxy<T>(
   sourceId: TenderSourceId,
   config: AxiosRequestConfig,
 ): Promise<AxiosResponse<T>> {
+  const { response } = await axiosWithSourceProxyDetailed<T>(sourceId, config);
+  return response;
+}
+
+export async function axiosWithSourceProxyDetailed<T>(
+  sourceId: TenderSourceId,
+  config: AxiosRequestConfig,
+): Promise<{ response: AxiosResponse<T>; proxyId?: string }> {
   const selectedProxy = pickProxy(sourceId);
 
   try {
@@ -161,7 +169,10 @@ export async function axiosWithSourceProxy<T>(
       markProxySuccess(selectedProxy.id);
     }
 
-    return response;
+    return {
+      response,
+      proxyId: selectedProxy?.id,
+    };
   } catch (error) {
     if (selectedProxy) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -169,6 +180,11 @@ export async function axiosWithSourceProxy<T>(
     }
     throw error;
   }
+}
+
+export function markProxySoftFailure(proxyId: string | undefined, error: string): void {
+  if (!proxyId) return;
+  markProxyFailure(proxyId, error);
 }
 
 export function getProxyPoolSnapshot() {
