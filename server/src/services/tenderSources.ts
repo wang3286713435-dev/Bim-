@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { AxiosError } from 'axios';
 import type { SearchResult } from '../types.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 import { axiosWithSourceProxy, axiosWithSourceProxyDetailed, markProxySoftFailure } from './proxyPool.js';
@@ -122,6 +123,84 @@ function isLowValueGzebRecord(title: string, content: string): boolean {
     '废标',
     '流标'
   ].some(keyword => text.includes(keyword));
+}
+
+function buildGzebQueryVariants(query: string): string[] {
+  const normalized = normalizeWhitespace(query);
+  if (!normalized) return [];
+
+  const variants = new Set<string>([normalized]);
+  const upper = normalized.toUpperCase();
+
+  if (upper !== 'BIM' && /BIM|建筑信息模型|智慧建造|CIM|数字孪生/i.test(normalized)) {
+    variants.add('BIM');
+  }
+
+  if (!normalized.includes('建筑信息模型') && /BIM|建筑信息模型/i.test(normalized)) {
+    variants.add('建筑信息模型');
+  }
+
+  if (!normalized.includes('智慧建造') && /智慧|数字|BIM/i.test(normalized)) {
+    variants.add('智慧建造');
+  }
+
+  const stripped = normalized
+    .replace(/全过程咨询/g, '')
+    .replace(/正向设计/g, '设计')
+    .replace(/数字化交付/g, '')
+    .replace(/深化设计/g, '设计')
+    .replace(/施工应用/g, '施工')
+    .trim();
+
+  if (stripped && stripped !== normalized && stripped.length >= 2) {
+    variants.add(stripped);
+  }
+
+  return [...variants].slice(0, 4);
+}
+
+type GzebErrorCategory =
+  | 'waf'
+  | 'gateway'
+  | 'rate_limit'
+  | 'timeout'
+  | 'connection'
+  | 'empty'
+  | 'api'
+  | 'unknown';
+
+function classifyGzebError(error: unknown): { category: GzebErrorCategory; message: string } {
+  if (error instanceof AxiosError) {
+    const status = error.response?.status;
+    if (status === 403) return { category: 'waf', message: '403 / WAF 拦截' };
+    if (status === 429) return { category: 'rate_limit', message: '429 限流' };
+    if (status === 502 || status === 503 || status === 504) return { category: 'gateway', message: `${status} 网关异常` };
+    if (error.code === 'ECONNABORTED') return { category: 'timeout', message: '请求超时' };
+    if (['ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(error.code ?? '')) {
+      return { category: 'connection', message: error.code ?? '连接异常' };
+    }
+    return { category: 'unknown', message: error.message };
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/empty result/i.test(message)) return { category: 'empty', message: '空结果 / 疑似被拦截' };
+  if (/api code/i.test(message)) return { category: 'api', message };
+  return { category: 'unknown', message };
+}
+
+function getGzebRetryDelayMs(category: GzebErrorCategory, baseDelayMs: number, attempt: number): number {
+  const factorMap: Record<GzebErrorCategory, number> = {
+    waf: 3,
+    gateway: 2,
+    rate_limit: 4,
+    timeout: 2,
+    connection: 2,
+    empty: 1,
+    api: 1,
+    unknown: 1,
+  };
+
+  return baseDelayMs * Math.max(1, factorMap[category]) * Math.max(1, attempt + 1);
 }
 
 function classifyTenderType(title: string, datasetName = ''): string | null {
@@ -339,141 +418,160 @@ export async function searchGzebpubservice(query: string, limit = 20): Promise<S
 
   const runtimeConfig = await getRuntimeConfig();
   const attempts = Math.max(2, runtimeConfig.sourceRetryCount + 1);
+  const variants = buildGzebQueryVariants(query);
+  const resultsByTitle = new Map<string, SearchResult>();
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const { response, proxyId } = await axiosWithSourceProxyDetailed<GzebResponse>('gzebpubservice', {
-        method: 'post',
-        url: 'http://www.gzebpubservice.cn/inteligentsearchfw/rest/esinteligentsearch/getFullTextDataNew',
-        data: {
-          pn: 1,
-          rn: limit,
-          sdt: '',
-          edt: '',
-          wd: query,
-          inc_wd: '',
-          exc_wd: '',
-          fields: 'title;content',
-          cnum: '001',
-          sort: '',
-          ssort: 'title',
-          cl: 500,
-          terminal: '',
-          condition: [],
-          time: [
-            {
-              fieldName: 'webdate',
-              startTime: getOneYearAgoStart(),
-              endTime: '2099-12-31 23:59:59'
-            }
-          ],
-          highlights: 'title;content',
-          statistics: null,
-          unionCondition: null,
-          accuracy: '',
-          noParticiple: '0',
-          searchRange: null,
-          isBusiness: '1'
-        },
-        headers: {
-          'Content-Type': 'application/json;charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0'
-        },
-        timeout: 20000
-      });
-
-      if (response.data.code !== 200 || !response.data.content) {
-        markProxySoftFailure(proxyId, `gzeb api code ${response.data.code ?? 'unknown'}`);
-        if (attempt < attempts - 1) {
-          await sleep(runtimeConfig.sourceRetryDelayMs * (attempt + 1));
-          continue;
-        }
-        console.log(`GZEB search: no results or API error (code: ${response.data.code ?? 'unknown'})`);
-        return [];
-      }
-
-      const parsed = JSON.parse(response.data.content) as GzebContent;
-      const records = parsed.result?.records ?? [];
-      const resultsByTitle = new Map<string, SearchResult>();
-
-      for (const record of records) {
-        const title = stripHtml(record.title);
-        const content = stripHtml(record.content);
-        if (isLowValueGzebRecord(title, content)) continue;
-        if (!shouldIncludeTender(title, content)) continue;
-
-        const type = classifyTenderType(title);
-        if (!type) continue;
-        const amount = parseAmountWan(content);
-        if (amount !== null && amount < 40) continue;
-
-        const url = record.linkurl ? new URL(record.linkurl, 'http://www.gzebpubservice.cn/').toString() : '';
-        if (!isHealthyGzebUrl(url, record.categorynum)) continue;
-        if (!(await isReachableDetailUrl(url))) continue;
-
-        const candidate = toTenderResult({
-          title,
-          url,
-          source: 'gzebpubservice',
-          publishedAt: toDate(record.webdate),
-          tender: {
-            type,
-            budgetWan: amount ?? undefined,
-            platform: '广州公共资源交易公共服务平台'
+  for (const variant of variants) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const { response, proxyId } = await axiosWithSourceProxyDetailed<GzebResponse>('gzebpubservice', {
+          method: 'post',
+          url: 'http://www.gzebpubservice.cn/inteligentsearchfw/rest/esinteligentsearch/getFullTextDataNew',
+          data: {
+            pn: 1,
+            rn: limit,
+            sdt: '',
+            edt: '',
+            wd: variant,
+            inc_wd: '',
+            exc_wd: '',
+            fields: 'title;content',
+            cnum: '001',
+            sort: '',
+            ssort: 'title',
+            cl: 500,
+            terminal: '',
+            condition: [],
+            time: [
+              {
+                fieldName: 'webdate',
+                startTime: getOneYearAgoStart(),
+                endTime: '2099-12-31 23:59:59'
+              }
+            ],
+            highlights: 'title;content',
+            statistics: null,
+            unionCondition: null,
+            accuracy: '',
+            noParticiple: '0',
+            searchRange: null,
+            isBusiness: '1'
           },
-          content: buildTenderContent([
-            '平台：广州公共资源交易公共服务平台',
-            `分类：${type}`,
-            amount !== null ? `预算：${amount} 万元` : null,
-            content || null
-          ])
-        })[0];
+          headers: {
+            'Content-Type': 'application/json;charset=UTF-8',
+            'User-Agent': 'Mozilla/5.0'
+          },
+          timeout: 20000
+        });
 
-        if (!candidate) continue;
-
-        const key = normalizeTitle(title);
-        const existing = resultsByTitle.get(key);
-        if (!existing) {
-          resultsByTitle.set(key, candidate);
-          continue;
+        if (response.data.code !== 200 || !response.data.content) {
+          const reason = `gzeb api code ${response.data.code ?? 'unknown'}`;
+          markProxySoftFailure(proxyId, reason);
+          const delayMs = getGzebRetryDelayMs('api', runtimeConfig.sourceRetryDelayMs, attempt);
+          if (attempt < attempts - 1) {
+            await sleep(delayMs);
+            continue;
+          }
+          console.log(`GZEB search: ${reason}, variant="${variant}"`);
+          break;
         }
 
-        const existingIsStatic = existing.url.includes('gzebpubservice.cn/jyfw/');
-        const candidateIsStatic = candidate.url.includes('gzebpubservice.cn/jyfw/');
-        if (!existingIsStatic && candidateIsStatic) {
-          resultsByTitle.set(key, candidate);
-          continue;
+        const parsed = JSON.parse(response.data.content) as GzebContent;
+        const records = parsed.result?.records ?? [];
+        const variantResults = new Map<string, SearchResult>();
+
+        for (const record of records) {
+          const title = stripHtml(record.title);
+          const content = stripHtml(record.content);
+          if (isLowValueGzebRecord(title, content)) continue;
+          if (!shouldIncludeTender(title, content)) continue;
+
+          const type = classifyTenderType(title);
+          if (!type) continue;
+          const amount = parseAmountWan(content);
+          if (amount !== null && amount < 40) continue;
+
+          const url = record.linkurl ? new URL(record.linkurl, 'http://www.gzebpubservice.cn/').toString() : '';
+          if (!isHealthyGzebUrl(url, record.categorynum)) continue;
+          if (!(await isReachableDetailUrl(url))) continue;
+
+          const candidate = toTenderResult({
+            title,
+            url,
+            source: 'gzebpubservice',
+            publishedAt: toDate(record.webdate),
+            tender: {
+              type,
+              budgetWan: amount ?? undefined,
+              platform: '广州公共资源交易公共服务平台'
+            },
+            content: buildTenderContent([
+              '平台：广州公共资源交易公共服务平台',
+              `分类：${type}`,
+              amount !== null ? `预算：${amount} 万元` : null,
+              content || null
+            ])
+          })[0];
+
+          if (!candidate) continue;
+
+          const key = normalizeTitle(title);
+          const existing = variantResults.get(key);
+          if (!existing) {
+            variantResults.set(key, candidate);
+            continue;
+          }
+
+          const existingIsStatic = existing.url.includes('gzebpubservice.cn/jyfw/');
+          const candidateIsStatic = candidate.url.includes('gzebpubservice.cn/jyfw/');
+          if (!existingIsStatic && candidateIsStatic) {
+            variantResults.set(key, candidate);
+            continue;
+          }
+
+          const existingHasAnnouncement = /招标公告|采购公告|竞价公告/.test(existing.title);
+          const candidateHasAnnouncement = /招标公告|采购公告|竞价公告/.test(candidate.title);
+          if (!existingHasAnnouncement && candidateHasAnnouncement) {
+            variantResults.set(key, candidate);
+          }
         }
 
-        const existingHasAnnouncement = /招标公告|采购公告|竞价公告/.test(existing.title);
-        const candidateHasAnnouncement = /招标公告|采购公告|竞价公告/.test(candidate.title);
-        if (!existingHasAnnouncement && candidateHasAnnouncement) {
-          resultsByTitle.set(key, candidate);
+        const results = [...variantResults.values()];
+        if (results.length === 0) {
+          markProxySoftFailure(proxyId, `gzeb empty result (${variant})`);
+          const delayMs = getGzebRetryDelayMs('empty', runtimeConfig.sourceRetryDelayMs, attempt);
+          if (attempt < attempts - 1) {
+            await sleep(delayMs);
+            continue;
+          }
+          break;
         }
-      }
 
-      const results = [...resultsByTitle.values()];
-      if (results.length === 0) {
-        markProxySoftFailure(proxyId, 'gzeb empty result');
+        for (const result of results) {
+          resultsByTitle.set(normalizeTitle(result.title), result);
+        }
+
+        if (resultsByTitle.size >= Math.min(limit, 3)) {
+          console.log(`GZEB search for "${query}" via "${variant}": found ${resultsByTitle.size} filtered results`);
+          return [...resultsByTitle.values()].slice(0, limit);
+        }
+
+        break;
+      } catch (error) {
+        const classified = classifyGzebError(error);
+        console.error(`GZEB search error [${classified.category}] variant="${variant}":`, classified.message);
+        const delayMs = getGzebRetryDelayMs(classified.category, runtimeConfig.sourceRetryDelayMs, attempt);
         if (attempt < attempts - 1) {
-          await sleep(runtimeConfig.sourceRetryDelayMs * (attempt + 1));
+          await sleep(delayMs);
           continue;
         }
       }
-
-      console.log(`GZEB search for "${query}": found ${results.length} filtered results`);
-      return results;
-    } catch (error) {
-      console.error('GZEB search error:', error instanceof Error ? error.message : error);
-      if (attempt < attempts - 1) {
-        await sleep(runtimeConfig.sourceRetryDelayMs * (attempt + 1));
-        continue;
-      }
-      return [];
     }
   }
 
-  return [];
+  const finalResults = [...resultsByTitle.values()].slice(0, limit);
+  console.log(`GZEB layered search for "${query}": found ${finalResults.length} filtered results`);
+  return finalResults;
 }
 
 interface SzygcgptResponse {
