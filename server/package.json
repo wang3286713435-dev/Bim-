@@ -1,16 +1,19 @@
 {
   "name": "yupi-hot-monitor-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "build:client": "npm --prefix ../client run build",
     "build": "tsc",
+    "build:app": "npm run build:client && npm run build",
     "start": "node dist/index.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:push": "prisma db push",
+    "sync:feishu": "tsx src/scripts/syncFeishuBitable.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

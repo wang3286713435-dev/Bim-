@@ -1,204 +1,202 @@
-# AI 热点监控工具
+# BIM Tender Monitor
 
-> 作者：[程序员鱼皮](https://yuyuanweb.feishu.cn/wiki/Abldw5WkjidySxkKxU2cQdAtnah)
->
-> 本项目为教学项目，提供完整视频教程 + 文字教程 + 简历写法 + 面试题解 + 答疑服务，帮你提升项目能力，给简历增加亮点！
->
-> ⭐️ 加入项目系列学习：[加入编程导航](https://www.codefather.cn/vip)
+面向 BIM 招投标场景的政府招采监控系统。项目基于原开源项目二次开发，当前聚焦深圳、广东、广州等政府/阳光采购平台，输出真正可跟进的 BIM 投标机会，而不是泛热点列表。
 
+## 当前版本
 
+- `v1.1.0`
+- 运行模式：后端托管前端的单应用模式
+- 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
-## 一、项目介绍
+## 核心能力
 
-这是一套以 **AI 编程实战** 为核心的项目教程，基于 Express 5 + React 19 + OpenRouter + Socket.io，用 AI 编程的方式从 0 到 1 开发一个《AI 热点监控工具》，带你亲身体验 AI Vibe Coding 的完整工作流，学会用 AI 快速做出实用的提效工具！
+- 聚焦 4 个 BIM 招采来源：`szggzy`、`szygcgpt`、`guangdong`、`gzebpubservice`
+- 列表抓取、详情增强、AI 识别、结构化字段提取、入库展示全链路闭环
+- 投标机会清单与项目详情页分层展示
+- 招采结构化筛选：地区、预算、截止时间、平台、BIM 类型
+- Firecrawl 详情增强与二段深度解析队列
+- OpenClaw / OpenRouter AI provider 路由
+- 飞书群推送 + 飞书多维表格全量/增量同步
+- 单应用部署，适合直接上云服务器
 
-📺 项目介绍视频，快速查看成品效果：https://bilibili.com/video/BV1g8d8B6ENk
+## 当前数据源
 
-![](https://pic.yupi.icu/1/image-20260304102630302.png)
+- 深圳公共资源交易中心 `szggzy`
+- 深圳阳光采购平台 `szygcgpt`
+- 广东省公共资源交易平台 `guangdong`
+- 广州公共资源交易公共服务平台 `gzebpubservice`
 
-输入要监控的关键词，系统自动从 Twitter、Bing、HackerNews、搜狗、B 站等 **8+** 个信息源聚合抓取内容，利用 AI 进行真假识别和相关性分析，并通过 WebSocket 实时推送和邮件通知用户。此外，还将热点监控能力封装为 **Agent Skills 技能包**，让 Cursor、VSCode Copilot、Claude Code 等 AI 编程工具也能直接使用。
+## 项目结构
 
-
-
-### 为什么做这个项目？
-
-鱼皮作为 AI 编程博主，要利用工具第一时间自动发现最新的热点（比如 AI 大模型的更新），并且及时给我发送通知，让我能够走在吃瓜第一线。
-
-既然如此，**不如做一个更通用的工具**。
-
-这就是 AI 热点监控工具的起点：让 AI 帮你盯热点，第一时间获取优质信息！
-
-![](https://pic.yupi.icu/1/AI%E7%83%AD%E7%82%B9%E7%9B%91%E6%8E%A7%E5%AF%B9%E8%AF%9D%E6%A1%86.jpg)
-
-
-
-### 6 大核心能力
-
-1）配置监控关键词，支持激活 / 暂停。
-
-![](https://pic.yupi.icu/1/image-20260304102804249.png)
-
-
-
-2）AI 自动从 8+ 数据源抓取和分析热点，利用 AI 进行查询扩展、真假识别、相关性分析和智能摘要。
-
-![](https://pic.yupi.icu/1/image-20260304103025682.png)
-
-
-
-3）多维度筛选和排序，按来源、重要性、时间范围筛选，按热度、相关性、时间排序。
-
-![](https://pic.yupi.icu/1/image-20260304103219366.png)
-
-
-
-4）全网搜索，输入关键词从多个数据源聚合搜索。
-
-![](https://pic.yupi.icu/1/image-20260304103824666.png)
-
-
-
-5）实时通知，WebSocket 实时推送 + 邮件通知。
-
-![](https://pic.yupi.icu/1/image-20260304104139285.png)
-
-
-
-6）Agent Skills 技能包，安装后在 Cursor、VSCode Copilot、Claude Code 中都能直接使用。
-
-![](https://pic.yupi.icu/1/1772099941189-4fb78679-12ac-4b92-a7b4-b5b4645b09d4.png)
-
-
-
-## 二、项目优势
-
-本项目选题新颖，紧跟 AI 编程时代，以 **实用工具开发** 为导向，区别于增删改查的烂大街项目。项目内容精炼，**不到一周就能学完**，带你掌握 AI 编程的完整工作流，给你的简历和求职大幅增加竞争力！
-
-技术丰富，覆盖 AI 编程全链路：
-
-![](https://pic.yupi.icu/1/image-20260304101227060.png)
-
-从这个项目中你可以学到：
-
-- 如何用 AI 编程从 0 到 1 开发一个完整的工具？
-- 如何安装和使用 MCP 增强 AI 能力？
-- 如何安装和使用 Agent Skills 提升 AI 编程质量？
-- 如何从多个信息源（Twitter、Bing、HN、B 站等）聚合抓取内容？
-- 如何通过 OpenRouter 接入 AI 大模型，实现智能内容审核？
-- 如何实现查询扩展（Query Expansion），提高信息检索的召回率？
-- 如何基于 Socket.io 实现 WebSocket 实时推送？
-- 如何使用 Aceternity UI 打造炫酷的科技感前端界面？
-- 如何开发标准化的 Agent Skills 技能包，并在多种 AI 工具中验证？
-- 如何在 AI 编程中进行人工确认、版本控制和迭代优化？
-
-
-
-### 鱼皮系列项目优势
-
-鱼皮的原创项目以 **实战** 为主，用 **全程直播** 的方式 **从 0 到 1** 带做，从需求分析、技术选型、项目设计、项目初始化、Demo 编写、前后端开发实现、项目优化、部署上线等，每个环节我都 **从理论到实践** 给大家讲的明明白白、每个细节都不放过！
-
-比起看网上的教程学习，鱼皮项目系列的优势：从学知识 => 实践项目 => 复习笔记 => 项目答疑 => 简历写法 => 面试题解的一条龙服务
-
-![](https://pic.yupi.icu/1/%E9%B1%BC%E7%9A%AE%E9%A1%B9%E7%9B%AE%E5%AE%9E%E6%88%98%E7%9A%84%E4%BC%98%E5%8A%BF%E5%A4%A7.jpeg)
-
-编程导航已有 **20+ 套项目教程！** 每个项目的学习重点不同，几乎全都是前端 + 后端的 **全栈项目**，也有大量 AI 应用开发项目。
-
-详细请见：[https://codefather.cn/course](https://www.codefather.cn/course)（在该页面右侧有教程推荐和学习建议）
-
-往期项目介绍视频：[https://bilibili.com/video/BV1YvmbYbEgS](https://www.bilibili.com/video/BV1YvmbYbEgS/)
-
-鱼皮的项目帮很多同学拿到了大厂高薪 Offer：
-
-![](https://pic.yupi.icu/1/%E7%BC%96%E7%A8%8B%E5%AF%BC%E8%88%AA2026%20offer%E6%8A%A5%E5%96%9C.png)
-
-
-
-## 三、更多介绍
-
-功能模块：
-
-![](https://pic.yupi.icu/1/image-20260304101313199.png)
-
-架构设计：
-
-![](https://pic.yupi.icu/1/image-20260304101440202.png)
-
-
-
-## 四、快速运行
-
-> 详细的保姆级教程请参考 [本地运行指南](docs/LOCAL_SETUP.md)
-
-### 前置条件
-
-- Node.js ≥ 18（推荐 20 LTS）
-- 一个 [OpenRouter API Key](https://openrouter.ai/settings/keys)（必需，用于 AI 分析）
-
-### 1. 克隆并安装依赖
-
-```bash
-git clone https://github.com/liyupi/yupi-hot-monitor.git
-cd yupi-hot-monitor
-
-# 后端
-cd server
-npm install
-npx prisma generate
-npx prisma db push
-
-# 前端
-cd ../client
-npm install
+```text
+client/   React 前端
+server/   Express + Prisma + SQLite 后端
+docs/     需求、开发、交接文档
+skills/   BIM 招采监控 Skill
 ```
 
-### 2. 配置环境变量
+## 快速开始
+
+### 环境要求
+
+- Node.js 20 LTS 推荐
+- npm 10+
+- SQLite（默认使用 Prisma 本地文件库）
+- 可选：Firecrawl、OpenClaw、飞书开放平台配置
+
+### 安装依赖
+
+```bash
+git clone <your-repo-url>
+cd yupi-hot-monitor
+
+npm --prefix client install
+npm --prefix server install
+cd server
+npx prisma generate
+npx prisma db push
+```
+
+### 环境变量
+
+复制并编辑 `/Users/Weishengsu/dev/yupi-hot-monitor/server/.env.example`：
 
 ```bash
 cp server/.env.example server/.env
 ```
 
-编辑 `server/.env`，至少填入 OpenRouter API Key：
+常用配置：
 
-```bash
-OPENROUTER_API_KEY=sk-or-v1-你的key
-# Twitter API Key（可选）
-TWITTER_API_KEY=你的key
+```env
+PORT=3001
+AI_PROVIDER=openclaw
+OPENCLAW_AGENT_ID=bim-tender
+OPENCLAW_BIN=/Users/yourname/.openclaw/bin/openclaw
+OPENCLAW_TIMEOUT_MS=180000
+
+FIRECRAWL_API_KEY=
+FEISHU_BOT_WEBHOOK_URL=
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_BITABLE_APP_TOKEN=
+FEISHU_BITABLE_TABLE_ID=
 ```
 
-### 3. 启动服务（两个终端）
+### 本地开发
 
 ```bash
-# 终端 1：启动后端（端口 3001）
-cd server && npm run dev
+cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+npm run dev
 
-# 终端 2：启动前端（端口 5173）
-cd client && npm run dev
+cd /Users/Weishengsu/dev/yupi-hot-monitor/client
+npm run dev
 ```
 
-访问 **http://localhost:5173** ，输入关键词即可开始监控热点 🔥
+开发模式地址：
 
-| 服务 | 地址 |
-|------|------|
-| 前端页面 | http://localhost:5173 |
-| 后端 API | http://localhost:3001 |
-| 数据库管理 | `cd server && npx prisma studio`（可选） |
+- 前端：[http://localhost:5173](http://localhost:5173)
+- 后端：[http://localhost:3001](http://localhost:3001)
 
-更多细节请查看 [保姆级本地运行指南](docs/LOCAL_SETUP.md)。
+### v1.1 单应用运行
 
+```bash
+cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+npm run build:app
+npm run start
+```
 
+运行后直接访问：
 
-## 加入项目学习
+- 应用首页：[http://localhost:3001](http://localhost:3001)
+- 健康检查：[http://localhost:3001/api/health](http://localhost:3001/api/health)
 
-编程导航已有 **20+ 套项目教程**！每个项目的学习重点不同，几乎全都是前端 + 后端的 **全栈** 项目，也有大量 AI 应用开发项目。
+## 常用命令
 
-![](https://pic.yupi.icu/1/%25E9%25A1%25B9%25E7%259B%25AE%25E6%2595%2599%25E7%25A8%258B.png)
+```bash
+cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+npm run build
+npm run build:app
+npm run start
+npm run sync:feishu -- --limit=40
+```
 
-欢迎加入 [编程导航](https://www.codefather.cn/vip)，加入后不仅可以全程跟学本项目，往期 **20+ 套原创项目教程** 也都可以无限回看。还能享受更多原创技术资料、学习和求职指导、上百场面试回放视频，开启你的编程起飞之旅~
+```bash
+cd /Users/Weishengsu/dev/yupi-hot-monitor/client
+npm run build
+```
 
-🧧 助力新项目学习，给大家发放 **限时编程导航优惠券**，扫码即可领券加入。加入三天内不满意可全额退款，欢迎加入体验，名额有限，速来学习！
+## 飞书同步
 
-<img width="404" alt="image" src="https://github.com/user-attachments/assets/56411098-b60e-4267-8ba2-4ebc5d416afc" />
+当前已支持：
 
-1 天不到 1 块钱，绝对是对自己最值的投资！成为编程导航会员后，可以解锁 20 多套项目的教程和资料，PC 网站和 APP 都可以学习，如图：
+- 飞书群机器人项目卡片推送
+- 飞书多维表格字段同步
+- 全量同步脚本：`npm run sync:feishu`
 
-![](https://pic.yupi.icu/1/image-20250120113756426-20250422160856746.png)
+建议在飞书表中使用这些业务字段：
+
+- 项目名称
+- 地区
+- 类型
+- 发布时间
+- 招标人
+- 预算
+- 截止日期
+- 平台来源
+- 招标文件链接
+- 状态
+- 优先级
+- 搜索关键词
+- 联系人
+- 系统ID
+- 项目编号
+- 开标时间
+- 文件截止
+- 联系电话
+- 邮箱
+- 服务范围
+- 资格要求
+- 字段完整度
+- 建议动作
+- 商机判断
+- 详情可靠性
+- 摘要
+
+## 文档
+
+- 开发文档：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/DEVELOPMENT.md`
+- 需求文档：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/REQUIREMENTS.md`
+- 上下文交接：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/CONTEXT_HANDOFF.md`
+- 本地运行：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/LOCAL_SETUP.md`
+- 版本记录：`/Users/Weishengsu/dev/yupi-hot-monitor/CHANGELOG.md`
+
+## 部署建议
+
+腾讯云 `2 核 4G` 可以先承载 `v1.1`：
+
+- `pm2` 或 `systemd` 托管 `node dist/index.js`
+- `Nginx` 反向代理到 `3001`
+- SQLite 先作为主库，后续可迁移 MySQL
+- 将 `.env` 单独维护在服务器
+
+最小部署流程：
+
+```bash
+cd /opt/bim-tender
+npm --prefix client install
+npm --prefix server install
+cd server
+npx prisma generate
+npx prisma db push
+npm run build:app
+npm run start
+```
+
+## 版本计划
+
+- `v1.1.0`：单应用部署、飞书同步、投标机会清单、详情页、数据库模糊搜索
+- `v1.2.0`：继续打磨前端搜索体验、主题切换与更轻量的列表交互
+
+## License
+
+本仓库基于原开源项目二次开发，请在对外发布时保留原作者与上游项目说明，并根据你的实际发布策略补充许可证信息。

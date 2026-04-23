@@ -36,6 +36,25 @@ export interface Hotspot {
   authorFollowers: number | null;
   authorVerified: boolean | null;
   publishedAt: string | null;
+  tenderType: string | null;
+  tenderRegion: string | null;
+  tenderCity: string | null;
+  tenderUnit: string | null;
+  tenderBudgetWan: number | null;
+  tenderDeadline: string | null;
+  tenderNoticeType: string | null;
+  tenderPlatform: string | null;
+  tenderProjectCode: string | null;
+  tenderContact: string | null;
+  tenderPhone: string | null;
+  tenderEmail: string | null;
+  tenderBidOpenTime: string | null;
+  tenderDocDeadline: string | null;
+  tenderServiceScope: string | null;
+  tenderQualification: string | null;
+  tenderAddress: string | null;
+  tenderDetailSource: string | null;
+  tenderDetailExtractedAt: string | null;
   createdAt: string;
   keyword: { id: string; text: string; category: string | null } | null;
 }
@@ -55,6 +74,123 @@ export interface Stats {
   today: number;
   urgent: number;
   bySource: Record<string, number>;
+}
+
+export interface SourceHealthProbe {
+  id: string;
+  name: string;
+  enabled: boolean;
+  ok: boolean;
+  count: number;
+  elapsedMs: number;
+  sampleTitle?: string;
+  sampleUrl?: string;
+  error?: string;
+  failureCount?: number;
+  circuitOpen?: boolean;
+  cooldownRemainingMs?: number;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+}
+
+export interface CrawlRunProbe {
+  id: string;
+  runId: string;
+  sourceId: string;
+  sourceName: string;
+  queryText: string | null;
+  enabled: boolean;
+  ok: boolean;
+  resultCount: number;
+  elapsedMs: number;
+  sampleTitle: string | null;
+  sampleUrl: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface CrawlRun {
+  id: string;
+  triggerType: string;
+  status: string;
+  keywordText: string | null;
+  keywordId: string | null;
+  searchQueries: string | null;
+  totalRaw: number;
+  totalUnique: number;
+  totalFresh: number;
+  totalSaved: number;
+  totalFiltered: number;
+  errorMessage: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  sourceProbes?: CrawlRunProbe[];
+}
+
+export interface RuntimeConfig {
+  tenderSources: string[];
+  maxAgeDays: number;
+  sourceResultLimit: number;
+  resultsPerKeyword: number;
+  queryVariantsPerKeyword: number;
+  sourceRetryCount: number;
+  sourceRetryDelayMs: number;
+  circuitBreakerThreshold: number;
+  circuitBreakerCooldownMs: number;
+  guangdongMaxPages: number;
+  lowValueExcludeKeywords: string[];
+  lowValueIncludeKeywords: string[];
+  minRelevanceScore: number;
+  strictKeywordMentionScore: number;
+}
+
+export interface SourceSetting {
+  id: string;
+  name: string;
+  platform: string;
+  homepage: string;
+  priority: number;
+  enabled: boolean;
+  runtime: {
+    failureCount: number;
+    circuitOpen: boolean;
+    cooldownRemainingMs: number;
+    lastError?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+  };
+}
+
+export interface OpsSummary {
+  stats: {
+    totalHotspots: number;
+    todayHotspots: number;
+  };
+  runtimeConfig: RuntimeConfig;
+  sourceHealth: SourceHealthProbe[];
+  recentRuns: CrawlRun[];
+  latestRun: CrawlRun | null;
+  failureSummary24h: Record<string, number>;
+}
+
+export interface DetailEnrichmentStatusItem {
+  id: string;
+  title: string;
+  completenessScore: number;
+  tenderDetailExtractedAt: string | null;
+}
+
+export interface DetailEnrichmentStatus {
+  queue: {
+    running: boolean;
+    pendingCount: number;
+    processedCount: number;
+    lastStartedAt?: string;
+    lastFinishedAt?: string;
+    lastError?: string;
+    currentHotspotId?: string;
+  };
+  data: DetailEnrichmentStatusItem[];
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -108,6 +244,7 @@ export const hotspotsApi = {
   getAll: (params?: { 
     page?: number; 
     limit?: number; 
+    searchText?: string;
     source?: string; 
     importance?: string; 
     keywordId?: string;
@@ -115,6 +252,14 @@ export const hotspotsApi = {
     timeRange?: string;
     timeFrom?: string;
     timeTo?: string;
+    tenderType?: string;
+    tenderRegion?: string;
+    tenderMinBudgetWan?: string | number;
+    tenderMaxBudgetWan?: string | number;
+    tenderDeadlineRange?: string;
+    tenderDeadlineFrom?: string;
+    tenderDeadlineTo?: string;
+    tenderPlatform?: string;
     sortBy?: string;
     sortOrder?: string;
   }) => {
@@ -130,6 +275,10 @@ export const hotspotsApi = {
   },
   
   getStats: () => request<Stats>('/hotspots/stats'),
+
+  getOpsSummary: () => request<OpsSummary>('/hotspots/ops/summary'),
+
+  getRuns: (limit = 20) => request<{ data: CrawlRun[] }>(`/hotspots/runs?limit=${limit}`),
   
   getById: (id: string) => request<Hotspot>(`/hotspots/${id}`),
   
@@ -137,6 +286,14 @@ export const hotspotsApi = {
     request<{ results: Hotspot[] }>('/hotspots/search', {
       method: 'POST',
       body: JSON.stringify({ query, sources })
+    }),
+
+  getDetailEnrichmentStatus: () => request<DetailEnrichmentStatus>('/hotspots/detail-enrichment/status'),
+
+  runDetailEnrichment: (limit = 20) =>
+    request<{ queued: number; queue: DetailEnrichmentStatus['queue'] }>('/hotspots/detail-enrichment/run', {
+      method: 'POST',
+      body: JSON.stringify({ limit })
     }),
   
   delete: (id: string) => 
@@ -173,6 +330,22 @@ export const notificationsApi = {
 // Settings API
 export const settingsApi = {
   getAll: () => request<Record<string, string>>('/settings'),
+
+  getRuntime: () => request<RuntimeConfig>('/settings/runtime'),
+
+  updateRuntime: (settings: Partial<RuntimeConfig>) =>
+    request<{ message: string; config: RuntimeConfig }>('/settings/runtime', {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    }),
+
+  getSources: () => request<{ data: SourceSetting[] }>('/settings/sources'),
+
+  updateSources: (sources: string[]) =>
+    request<{ message: string; tenderSources: string[] }>('/settings/sources', {
+      method: 'PUT',
+      body: JSON.stringify({ sources })
+    }),
   
   update: (settings: Record<string, string>) => 
     request<void>('/settings', {

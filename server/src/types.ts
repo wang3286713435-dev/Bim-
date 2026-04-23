@@ -1,10 +1,45 @@
+export interface TenderMetadata {
+  type?: string;
+  region?: string;
+  city?: string;
+  unit?: string;
+  budgetWan?: number;
+  deadline?: Date;
+  noticeType?: string;
+  platform?: string;
+  projectCode?: string;
+  contact?: string;
+  phone?: string;
+  email?: string;
+  bidOpenTime?: Date;
+  docDeadline?: Date;
+  serviceScope?: string;
+  qualification?: string;
+  address?: string;
+  detailSource?: string;
+  detailExtractedAt?: Date;
+}
+
 export interface SearchResult {
   title: string;
   content: string;
   url: string;
-  source: 'twitter' | 'bing' | 'google' | 'duckduckgo' | 'hackernews' | 'sogou' | 'bilibili' | 'weibo';
+  source:
+    | 'twitter'
+    | 'bing'
+    | 'google'
+    | 'duckduckgo'
+    | 'hackernews'
+    | 'sogou'
+    | 'bilibili'
+    | 'weibo'
+    | 'szggzy'
+    | 'gzebpubservice'
+    | 'szygcgpt'
+    | 'guangdong';
   sourceId?: string;
   publishedAt?: Date;
+  tender?: TenderMetadata;
   viewCount?: number;
   likeCount?: number;
   retweetCount?: number;
@@ -66,6 +101,25 @@ export interface HotspotWithKeyword {
   authorFollowers: number | null;
   authorVerified: boolean | null;
   publishedAt: Date | null;
+  tenderType: string | null;
+  tenderRegion: string | null;
+  tenderCity: string | null;
+  tenderUnit: string | null;
+  tenderBudgetWan: number | null;
+  tenderDeadline: Date | null;
+  tenderNoticeType: string | null;
+  tenderPlatform: string | null;
+  tenderProjectCode: string | null;
+  tenderContact: string | null;
+  tenderPhone: string | null;
+  tenderEmail: string | null;
+  tenderBidOpenTime: Date | null;
+  tenderDocDeadline: Date | null;
+  tenderServiceScope: string | null;
+  tenderQualification: string | null;
+  tenderAddress: string | null;
+  tenderDetailSource: string | null;
+  tenderDetailExtractedAt: Date | null;
   createdAt: Date;
   keywordId: string | null;
   keyword: {

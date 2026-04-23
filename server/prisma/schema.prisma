@@ -18,6 +18,7 @@ model Keyword {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   hotspots  Hotspot[]
+  runs      CrawlRun[]
 }
 
 model Hotspot {
@@ -45,8 +46,27 @@ model Hotspot {
   authorAvatar    String?   // 作者头像
   authorFollowers Int?      // 作者粉丝数
   authorVerified  Boolean?  // 作者是否认证
-  publishedAt     DateTime?
-  createdAt       DateTime  @default(now())
+  publishedAt      DateTime?
+  tenderType       String?   // BIM招采分类：设计BIM、全过程BIM等
+  tenderRegion     String?   // 招采地区
+  tenderCity       String?   // 城市/站点
+  tenderUnit       String?   // 招标/采购/建设单位
+  tenderBudgetWan  Float?    // 预算金额，单位：万元
+  tenderDeadline   DateTime? // 投标/文件截止时间
+  tenderNoticeType String?   // 公告类型
+  tenderPlatform   String?   // 平台名称
+  tenderProjectCode String?   // 项目编号/招标编号/采购编号
+  tenderContact     String?   // 联系人
+  tenderPhone       String?   // 联系电话
+  tenderEmail       String?   // 联系邮箱
+  tenderBidOpenTime DateTime? // 开标时间
+  tenderDocDeadline DateTime? // 招标/采购文件获取截止时间
+  tenderServiceScope String?  // BIM服务范围/采购内容
+  tenderQualification String? // 资质/资格要求
+  tenderAddress      String?  // 开标/递交/项目地址
+  tenderDetailSource String?  // detail-api/firecrawl/rule 等
+  tenderDetailExtractedAt DateTime? // 详情字段提取时间
+  createdAt        DateTime  @default(now())
   keywordId       String?
   keyword         Keyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
 
@@ -67,4 +87,46 @@ model Setting {
   id    String @id @default(uuid())
   key   String @unique
   value String
+}
+
+model CrawlRun {
+  id               String        @id @default(uuid())
+  triggerType      String        // manual, scheduled
+  status           String        @default("running") // running, completed, failed
+  keywordText      String?
+  keywordId        String?
+  searchQueries    String?       // JSON array
+  totalRaw         Int           @default(0)
+  totalUnique      Int           @default(0)
+  totalFresh       Int           @default(0)
+  totalSaved       Int           @default(0)
+  totalFiltered    Int           @default(0)
+  errorMessage     String?
+  startedAt        DateTime      @default(now())
+  completedAt      DateTime?
+  keyword          Keyword?      @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  sourceProbes     SourceProbe[]
+
+  @@index([startedAt])
+  @@index([status])
+}
+
+model SourceProbe {
+  id           String    @id @default(uuid())
+  runId        String
+  sourceId     String
+  sourceName   String
+  queryText    String?
+  enabled      Boolean   @default(true)
+  ok           Boolean   @default(false)
+  resultCount  Int       @default(0)
+  elapsedMs    Int       @default(0)
+  sampleTitle  String?
+  sampleUrl    String?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  run          CrawlRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([sourceId, createdAt])
 }

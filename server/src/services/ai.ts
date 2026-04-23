@@ -1,9 +1,5 @@
-import { OpenRouter } from '@openrouter/sdk';
 import type { AIAnalysis } from '../types.js';
-
-const openRouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY ?? ''
-});
+import { generateStructuredJson } from './llmProvider.js';
 
 // ========== Query Expansion（查询扩展） ==========
 
@@ -14,6 +10,11 @@ const openRouter = new OpenRouter({
  */
 const expansionCache = new Map<string, string[]>();
 
+function hasUsableOpenRouterKey(): boolean {
+  const key = process.env.OPENROUTER_API_KEY?.trim();
+  return Boolean(key && key !== 'your_openrouter_api_key_here');
+}
+
 export async function expandKeyword(keyword: string): Promise<string[]> {
   // 缓存命中
   if (expansionCache.has(keyword)) {
@@ -23,16 +24,18 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
   // 不管 AI 是否可用，先提取基础核心词
   const coreTerms = extractCoreTerms(keyword);
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!hasUsableOpenRouterKey()) {
+    if (process.env.AI_PROVIDER === 'openclaw') {
+      // OpenClaw 模式下继续尝试调用本地 agent
+    } else {
     const result = [keyword, ...coreTerms];
     expansionCache.set(keyword, result);
     return result;
+    }
   }
 
   try {
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
+    const parsed = await generateStructuredJson<string[]>([
         {
           role: 'system',
           content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
@@ -52,22 +55,12 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
           role: 'user',
           content: keyword
         }
-      ],
-      temperature: 0.2,
-      maxTokens: 300
-    });
+      ], { temperature: 0.2, maxTokens: 300 });
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-    const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed: string[] = JSON.parse(jsonMatch[0]);
-      // 确保原始关键词和核心词都在列表中
-      const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
-      expansionCache.set(keyword, expanded);
-      console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
-      return expanded;
-    }
+    const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
+    expansionCache.set(keyword, expanded);
+    console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
+    return expanded;
   } catch (error) {
     console.error('Query expansion failed:', error);
   }
@@ -92,6 +85,17 @@ function extractCoreTerms(keyword: string): string[] {
       terms.push(parts[i] + ' ' + parts[i + 1]);
     }
   }
+
+  const upperKeyword = keyword.toUpperCase();
+  if (upperKeyword.includes('BIM')) terms.push('BIM');
+  if (upperKeyword.includes('EPC')) terms.push('EPC');
+  if (keyword.includes('建筑信息模型')) terms.push('建筑信息模型', 'BIM');
+
+  const chineseTerms = ['设计', '正向设计', '全过程', '全过程咨询', '咨询', '施工', '施工应用', '深化设计', '数字化交付', '技术服务', '智慧建造', 'CIM'];
+  for (const term of chineseTerms) {
+    if (keyword.includes(term)) terms.push(term);
+  }
+
   // 去重，排除原始关键词本身
   return [...new Set(terms)].filter(t => t.toLowerCase() !== keyword.toLowerCase());
 }
@@ -120,56 +124,58 @@ function buildAnalysisPrompt(keyword: string, preMatchResult: { matched: boolean
     ? `\n注意：文本预匹配发现内容中包含以下关键词变体：${preMatchResult.matchedTerms.join('、')}` 
     : `\n注意：文本预匹配发现内容中未直接提及关键词"${keyword}"的任何变体，请特别严格审核相关性。`;
 
-  return `你是一个热点内容精准匹配专家。你的任务是判断一段内容是否与指定的监控关键词【${keyword}】直接相关。
+  return `你是建筑/BIM企业投标经营助手。判断公告是否是【${keyword}】相关投标机会，并输出投标要点。
 
 ${matchHint}
 
-分析要点：
-1. 判断是否为真实有价值的信息（排除标题党、假新闻、营销软文）
-2. 判断内容是否【直接】涉及关键词"${keyword}"。注意：
-   - 仅仅属于同一领域但未提及关键词的内容，相关性应低于 40 分
-   - 内容必须直接讨论、提及或与"${keyword}"有实质关联才能获得 60 分以上
-   - 只是间接沾边（如同类产品、同领域但不同主题）应给 30-50 分
-3. 判断内容中是否直接提及了"${keyword}"或其等价表述（keywordMentioned）
-4. 评估热点的重要程度（对关注"${keyword}"的人来说有多重要）
-5. 用一句话说明此内容与"${keyword}"的关系（不是介绍内容本身，而是说"此内容与关键词的关联是什么"）
-6. 用一句话解释你的相关性打分理由
+评分规则：
+- isReal=false：新闻、政策、结果公示、坏页面、无投标价值页面。
+- relevance 是投标线索价值分：90+立即跟进；75-89进入商机初筛；60-74人工补字段；40-59观察；低于40过滤。
+- importance：urgent=临近截止或高度匹配；high=值得跟进；medium=待补充核验；low=观察。
+- summary 必须写成“投标要点”，包含能识别出的项目、单位、地区、预算/截止、BIM服务范围、建议动作；缺失字段要说明需人工补齐。
 
 请以 JSON 格式输出：
 {
   "isReal": true/false,
   "relevance": 0-100,
-  "relevanceReason": "相关性打分理由...",
+  "relevanceReason": "投标价值打分理由，提到公告阶段、BIM服务内容、字段完整度或风险",
   "keywordMentioned": true/false,
   "importance": "low/medium/high/urgent",
-  "summary": "此内容与【${keyword}】的关联：..."
+  "summary": "投标要点：..."
 }
 
 只输出 JSON，不要有其他内容。`;
+}
+
+function buildRuleBasedTenderAnalysis(content: string, matchResult: { matched: boolean; matchedTerms: string[] }, reason: string): AIAnalysis {
+  const hasDeadline = /截止|递交|开标|投标文件|报名/.test(content);
+  const hasBudget = /预算|控制价|最高限价|金额|万元|元/.test(content);
+  const isResultLike = /中标结果|成交结果|候选人公示|合同公告|结果公示/.test(content);
+  const relevance = isResultLike ? 45 : matchResult.matched ? (hasDeadline || hasBudget ? 82 : 72) : 35;
+  const importance: AIAnalysis['importance'] = relevance >= 82 ? 'high' : relevance >= 60 ? 'medium' : 'low';
+
+  return {
+    isReal: !isResultLike && relevance >= 40,
+    relevance,
+    relevanceReason: `${reason}；规则判断：${matchResult.matched ? `命中 ${matchResult.matchedTerms.join('、')}` : '未直接命中关键词'}，${hasBudget ? '包含预算/金额线索' : '预算字段待补齐'}，${hasDeadline ? '包含截止/开标线索' : '截止时间待补齐'}。`,
+    keywordMentioned: matchResult.matched,
+    importance,
+    summary: `投标要点：${content.slice(0, 90)}${content.length > 90 ? '...' : ''}；建议人工核对招标单位、预算、截止时间和BIM服务范围。`
+  };
 }
 
 export async function analyzeContent(content: string, keyword: string, preMatchResult?: { matched: boolean; matchedTerms: string[] }): Promise<AIAnalysis> {
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!hasUsableOpenRouterKey() && process.env.AI_PROVIDER !== 'openclaw') {
     console.warn('OpenRouter API key not configured, using fallback analysis');
-    return {
-      isReal: true,
-      relevance: matchResult.matched ? 50 : 20,
-      relevanceReason: '未配置 AI 服务，使用默认分数',
-      keywordMentioned: matchResult.matched,
-      importance: 'low',
-      summary: content.slice(0, 50) + '...'
-    };
+    return buildRuleBasedTenderAnalysis(content, matchResult, '未配置 AI 服务，使用规则投标分析');
   }
 
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
-
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
+    const parsed = await generateStructuredJson<AIAnalysis>([
         {
           role: 'system',
           content: prompt
@@ -178,42 +184,21 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
           role: 'user',
           content: content.slice(0, 2000) // 限制内容长度
         }
-      ],
-      temperature: 0.2, // 降低温度，提高判断一致性
-      maxTokens: 500
-    });
+      ], { temperature: 0.2, maxTokens: 500 });
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-    
-    // 尝试解析 JSON
-    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        isReal: Boolean(parsed.isReal),
-        relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
-        relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
-        keywordMentioned: Boolean(parsed.keywordMentioned),
-        importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance) 
-          ? parsed.importance 
-          : 'low',
-        summary: String(parsed.summary || '').slice(0, 150)
-      };
-    }
-
-    throw new Error('Failed to parse AI response');
+    return {
+      isReal: Boolean(parsed.isReal),
+      relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
+      relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
+      keywordMentioned: Boolean(parsed.keywordMentioned),
+      importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance)
+        ? parsed.importance
+        : 'low',
+      summary: String(parsed.summary || '').slice(0, 150)
+    };
   } catch (error) {
     console.error('AI analysis failed:', error);
-    // Fallback
-    return {
-      isReal: true,
-      relevance: matchResult.matched ? 30 : 10,
-      relevanceReason: 'AI 分析失败，使用默认分数',
-      keywordMentioned: matchResult.matched,
-      importance: 'low',
-      summary: content.slice(0, 50) + '...'
-    };
+    return buildRuleBasedTenderAnalysis(content, matchResult, 'AI 分析超时或失败，使用规则投标分析');
   }
 }
 

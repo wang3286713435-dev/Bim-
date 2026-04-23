@@ -1,28 +1,40 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target,
+  ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target, Search,
   ChevronDown, Check, RotateCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Keyword } from '../services/api';
 
 export interface FilterState {
+  searchText: string;
   source: string;
   importance: string;
   keywordId: string;
   timeRange: string;
   isReal: string;
+  tenderType: string;
+  tenderRegion: string;
+  tenderMinBudgetWan: string;
+  tenderDeadlineRange: string;
+  tenderPlatform: string;
   sortBy: string;
   sortOrder: string;
 }
 
 export const defaultFilterState: FilterState = {
+  searchText: '',
   source: '',
   importance: '',
   keywordId: '',
   timeRange: '',
   isReal: '',
+  tenderType: '',
+  tenderRegion: '',
+  tenderMinBudgetWan: '',
+  tenderDeadlineRange: '',
+  tenderPlatform: '',
   sortBy: 'createdAt',
   sortOrder: 'desc',
 };
@@ -43,14 +55,10 @@ const SORT_OPTIONS = [
 
 const SOURCE_OPTIONS = [
   { value: '', label: '全部来源' },
-  { value: 'twitter', label: 'Twitter' },
-  { value: 'bing', label: 'Bing' },
-  { value: 'google', label: 'Google' },
-  { value: 'sogou', label: '搜狗' },
-  { value: 'bilibili', label: 'Bilibili' },
-  { value: 'weibo', label: '微博热搜' },
-  { value: 'hackernews', label: 'HackerNews' },
-  { value: 'duckduckgo', label: 'DuckDuckGo' },
+  { value: 'szggzy', label: '深圳交易中心' },
+  { value: 'szygcgpt', label: '深圳阳光采购' },
+  { value: 'guangdong', label: '广东交易平台' },
+  { value: 'gzebpubservice', label: '广州交易平台' },
 ];
 
 const IMPORTANCE_OPTIONS = [
@@ -73,6 +81,51 @@ const REAL_OPTIONS = [
   { value: '', label: '全部' },
   { value: 'true', label: '✅ 真实' },
   { value: 'false', label: '⚠️ 疑似虚假' },
+];
+
+const TENDER_TYPE_OPTIONS = [
+  { value: '', label: '全部类型' },
+  { value: '设计BIM', label: '设计BIM' },
+  { value: '全过程BIM', label: '全过程BIM' },
+  { value: '施工BIM', label: '施工BIM' },
+  { value: '智慧CIM', label: '智慧CIM' },
+  { value: '其他BIM', label: '其他BIM' },
+];
+
+const TENDER_REGION_OPTIONS = [
+  { value: '', label: '全部地区' },
+  { value: '深圳', label: '深圳' },
+  { value: '广州', label: '广州' },
+  { value: '佛山', label: '佛山' },
+  { value: '东莞', label: '东莞' },
+  { value: '珠海', label: '珠海' },
+  { value: '中山', label: '中山' },
+  { value: '惠州', label: '惠州' },
+  { value: '广东', label: '广东全省' },
+];
+
+const TENDER_BUDGET_OPTIONS = [
+  { value: '', label: '全部预算' },
+  { value: '40', label: '≥ 40 万' },
+  { value: '100', label: '≥ 100 万' },
+  { value: '500', label: '≥ 500 万' },
+  { value: '1000', label: '≥ 1000 万' },
+];
+
+const TENDER_DEADLINE_OPTIONS = [
+  { value: '', label: '全部截止' },
+  { value: 'open', label: '未过期' },
+  { value: '7d', label: '7 天内截止' },
+  { value: '30d', label: '30 天内截止' },
+  { value: 'expired', label: '已过期' },
+];
+
+const TENDER_PLATFORM_OPTIONS = [
+  { value: '', label: '全部平台' },
+  { value: '深圳公共资源交易中心', label: '深圳公共资源交易中心' },
+  { value: '深圳阳光采购平台', label: '深圳阳光采购平台' },
+  { value: '广东省公共资源交易平台', label: '广东省公共资源交易平台' },
+  { value: '广州公共资源交易平台', label: '广州公共资源交易平台' },
 ];
 
 // Dropdown component
@@ -145,10 +198,16 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
 
   const activeFilterCount = [
     filters.source,
+    filters.searchText,
     filters.importance,
     filters.keywordId,
     filters.timeRange,
     filters.isReal,
+    filters.tenderType,
+    filters.tenderRegion,
+    filters.tenderMinBudgetWan,
+    filters.tenderDeadlineRange,
+    filters.tenderPlatform,
   ].filter(v => v !== '').length;
 
   const hasNonDefaultSort = filters.sortBy !== 'createdAt';
@@ -170,6 +229,24 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
     <div className="space-y-3">
       {/* Main Bar: Sort + Filter Toggle */}
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300 sm:max-w-sm">
+          <Search className="h-4 w-4 text-slate-500" />
+          <input
+            value={filters.searchText}
+            onChange={(event) => update('searchText', event.target.value)}
+            placeholder="搜索项目名称、单位、项目编号..."
+            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+          />
+          {filters.searchText && (
+            <button
+              onClick={() => update('searchText', '')}
+              className="rounded-full p-1 text-slate-500 transition hover:bg-white/5 hover:text-slate-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
         {/* Sort Selector */}
         <div className="flex items-center gap-1 bg-white/[0.03] rounded-xl border border-white/5 p-1">
           <ArrowUpDown className="w-3.5 h-3.5 text-slate-600 ml-2" />
@@ -256,6 +333,36 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
                 onRemove={() => update('isReal', '')}
               />
             )}
+            {filters.tenderType && (
+              <FilterTag
+                label={TENDER_TYPE_OPTIONS.find(o => o.value === filters.tenderType)?.label || filters.tenderType}
+                onRemove={() => update('tenderType', '')}
+              />
+            )}
+            {filters.tenderRegion && (
+              <FilterTag
+                label={TENDER_REGION_OPTIONS.find(o => o.value === filters.tenderRegion)?.label || filters.tenderRegion}
+                onRemove={() => update('tenderRegion', '')}
+              />
+            )}
+            {filters.tenderMinBudgetWan && (
+              <FilterTag
+                label={TENDER_BUDGET_OPTIONS.find(o => o.value === filters.tenderMinBudgetWan)?.label || `≥ ${filters.tenderMinBudgetWan} 万`}
+                onRemove={() => update('tenderMinBudgetWan', '')}
+              />
+            )}
+            {filters.tenderDeadlineRange && (
+              <FilterTag
+                label={TENDER_DEADLINE_OPTIONS.find(o => o.value === filters.tenderDeadlineRange)?.label || filters.tenderDeadlineRange}
+                onRemove={() => update('tenderDeadlineRange', '')}
+              />
+            )}
+            {filters.tenderPlatform && (
+              <FilterTag
+                label={TENDER_PLATFORM_OPTIONS.find(o => o.value === filters.tenderPlatform)?.label || filters.tenderPlatform}
+                onRemove={() => update('tenderPlatform', '')}
+              />
+            )}
           </div>
         )}
       </div>
@@ -275,6 +382,11 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
               <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} />
               <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} />
               <Dropdown label="真实性" value={filters.isReal} options={REAL_OPTIONS} onChange={(v) => update('isReal', v)} />
+              <Dropdown label="BIM 类型" value={filters.tenderType} options={TENDER_TYPE_OPTIONS} onChange={(v) => update('tenderType', v)} />
+              <Dropdown label="地区" value={filters.tenderRegion} options={TENDER_REGION_OPTIONS} onChange={(v) => update('tenderRegion', v)} />
+              <Dropdown label="预算" value={filters.tenderMinBudgetWan} options={TENDER_BUDGET_OPTIONS} onChange={(v) => update('tenderMinBudgetWan', v)} />
+              <Dropdown label="截止时间" value={filters.tenderDeadlineRange} options={TENDER_DEADLINE_OPTIONS} onChange={(v) => update('tenderDeadlineRange', v)} />
+              <Dropdown label="平台" value={filters.tenderPlatform} options={TENDER_PLATFORM_OPTIONS} onChange={(v) => update('tenderPlatform', v)} />
             </div>
           </motion.div>
         )}
