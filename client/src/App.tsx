@@ -1073,6 +1073,129 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
   );
 }
 
+function QualityMetric({
+  title,
+  value,
+  caption,
+  themeMode,
+}: {
+  title: string;
+  value: string;
+  caption: string;
+  themeMode: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
+  return (
+    <div className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{title}</p>
+      <p className={cn('mt-2 text-2xl font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{value}</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{caption}</p>
+    </div>
+  );
+}
+
+function QualityCoverageCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  if (!summary) return null;
+
+  const rows = [
+    { label: '单位披露率', value: summary.quality.unitCoverage },
+    { label: '预算披露率', value: summary.quality.budgetCoverage },
+    { label: '截止披露率', value: summary.quality.deadlineCoverage },
+    { label: '联系人披露率', value: summary.quality.contactCoverage },
+    { label: '详情解析率', value: summary.quality.detailCoverage },
+  ];
+
+  return (
+    <section className={cn(
+      'rounded-[24px] border p-5 shadow-[0_18px_56px_rgba(0,0,0,0.2)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>数据质量</h3>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>直接看字段披露率，判断当前项目池能不能支撑投标决策。</p>
+        </div>
+        <div className={cn('rounded-2xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
+          样本 {summary.quality.total} 条
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <QualityMetric title="高完整度" value={`${summary.quality.highCompletenessCount}`} caption="字段完整度 >= 60 的机会数" themeMode={themeMode} />
+        <QualityMetric title="可跟进" value={`${summary.quality.activeCount}`} caption="未截止或未标注截止的机会数" themeMode={themeMode} />
+        <QualityMetric title="已截止" value={`${summary.quality.expiredCount}`} caption="建议仅作归档观察" themeMode={themeMode} />
+        <QualityMetric title="联系人披露" value={`${summary.quality.contactCount}`} caption={`联系电话披露率 ${summary.quality.phoneCoverage}%`} themeMode={themeMode} />
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="mb-1.5 flex items-center justify-between text-sm">
+              <span className={cn(isLight ? 'text-slate-700' : 'text-slate-300')}>{row.label}</span>
+              <span className={cn('font-medium', isLight ? 'text-slate-900' : 'text-white')}>{row.value}%</span>
+            </div>
+            <div className={cn('h-2 overflow-hidden rounded-full', isLight ? 'bg-slate-100' : 'bg-white/8')}>
+              <div className="h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#14b8a6)]" style={{ width: `${row.value}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  if (!summary) return null;
+
+  return (
+    <section className={cn(
+      'rounded-[24px] border p-5 shadow-[0_18px_56px_rgba(0,0,0,0.2)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5">
+        <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源质量分布</h3>
+        <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>看每个来源“有多少数据”和“数据够不够用”，比只看成功失败更接近业务价值。</p>
+      </div>
+      <div className="space-y-3">
+        {summary.sourceQuality.map((item) => (
+          <div key={item.source} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{getSourceLabel(item.source)}</p>
+                <p className="mt-1 text-xs text-slate-500">样本 {item.total} 条 · 平均完整度 {item.avgCompleteness}</p>
+              </div>
+              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(item.avgCompleteness >= 60 ? 'success' : item.avgCompleteness >= 40 ? 'warning' : 'danger', themeMode))}>
+                {item.avgCompleteness >= 60 ? '质量较高' : item.avgCompleteness >= 40 ? '待补齐' : '质量偏低'}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {[
+                ['单位', item.unitCoverage],
+                ['预算', item.budgetCoverage],
+                ['截止', item.deadlineCoverage],
+                ['联系人', item.contactCoverage],
+                ['详情', item.detailCoverage],
+              ].map(([label, value]) => (
+                <div key={String(label)}>
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">{label}</span>
+                    <span className={cn(isLight ? 'text-slate-900' : 'text-white')}>{value}%</span>
+                  </div>
+                  <div className={cn('h-1.5 overflow-hidden rounded-full', isLight ? 'bg-slate-100' : 'bg-white/8')}>
+                    <div className="h-full rounded-full bg-[linear-gradient(90deg,#22c55e,#14b8a6)]" style={{ width: `${value}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function HeaderProgress({
   progressValue,
   progressLabel,
@@ -2342,6 +2465,11 @@ function App() {
             </section>
 
             <SourceHealthCard summary={opsSummary} themeMode={themeMode} />
+
+            <section className="grid gap-5 xl:grid-cols-[1.05fr_1fr]">
+              <QualityCoverageCard summary={opsSummary} themeMode={themeMode} />
+              <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
+            </section>
 
             <section className={cn(
               'rounded-[32px] border p-6 shadow-[0_24px_100px_rgba(0,0,0,0.3)]',

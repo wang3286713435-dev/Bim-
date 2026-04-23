@@ -322,7 +322,8 @@ router.get('/ops/summary', async (req, res) => {
       todayHotspots,
       latestRun,
       recentRuns,
-      recentSourceProbes
+      recentSourceProbes,
+      hotspotQualityRows
     ] = await Promise.all([
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES }, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
@@ -356,6 +357,27 @@ router.get('/ops/summary', async (req, res) => {
           ok: true,
           errorMessage: true,
           resultCount: true
+        }
+      }),
+      prisma.hotspot.findMany({
+        where: {
+          source: { in: TENDER_SOURCES }
+        },
+        select: {
+          id: true,
+          source: true,
+          tenderUnit: true,
+          tenderBudgetWan: true,
+          tenderDeadline: true,
+          tenderBidOpenTime: true,
+          tenderDocDeadline: true,
+          tenderProjectCode: true,
+          tenderServiceScope: true,
+          tenderQualification: true,
+          tenderAddress: true,
+          tenderContact: true,
+          tenderPhone: true,
+          tenderDetailSource: true
         }
       })
     ]);
@@ -420,11 +442,113 @@ router.get('/ops/summary', async (req, res) => {
         .slice(0, 3);
     }
 
+    const quality = {
+      total: hotspotQualityRows.length,
+      unitCount: 0,
+      budgetCount: 0,
+      deadlineCount: 0,
+      contactCount: 0,
+      phoneCount: 0,
+      detailCount: 0,
+      activeCount: 0,
+      expiredCount: 0,
+      highCompletenessCount: 0
+    };
+    const sourceQualityMap = new Map<string, {
+      source: string;
+      total: number;
+      unitCount: number;
+      budgetCount: number;
+      deadlineCount: number;
+      contactCount: number;
+      detailCount: number;
+      completenessTotal: number;
+    }>();
+
+    for (const row of hotspotQualityRows) {
+      const deadline = getEffectiveDeadlineTime(row);
+      const completeness = getTenderFieldCompletenessScore(row);
+      const item = sourceQualityMap.get(row.source) || {
+        source: row.source,
+        total: 0,
+        unitCount: 0,
+        budgetCount: 0,
+        deadlineCount: 0,
+        contactCount: 0,
+        detailCount: 0,
+        completenessTotal: 0
+      };
+
+      item.total += 1;
+      item.completenessTotal += completeness;
+      quality.total += 0;
+
+      if (row.tenderUnit) {
+        quality.unitCount += 1;
+        item.unitCount += 1;
+      }
+      if (row.tenderBudgetWan != null) {
+        quality.budgetCount += 1;
+        item.budgetCount += 1;
+      }
+      if (deadline != null) {
+        quality.deadlineCount += 1;
+        item.deadlineCount += 1;
+      }
+      if (row.tenderContact) {
+        quality.contactCount += 1;
+        item.contactCount += 1;
+      }
+      if (row.tenderPhone) {
+        quality.phoneCount += 1;
+      }
+      if (row.tenderDetailSource) {
+        quality.detailCount += 1;
+        item.detailCount += 1;
+      }
+      if (deadline == null || deadline >= Date.now()) {
+        quality.activeCount += 1;
+      } else {
+        quality.expiredCount += 1;
+      }
+      if (completeness >= 60) {
+        quality.highCompletenessCount += 1;
+      }
+
+      sourceQualityMap.set(row.source, item);
+    }
+
+    const sourceQuality = [...sourceQualityMap.values()]
+      .map((item) => ({
+        source: item.source,
+        total: item.total,
+        unitCoverage: item.total ? Math.round((item.unitCount / item.total) * 100) : 0,
+        budgetCoverage: item.total ? Math.round((item.budgetCount / item.total) * 100) : 0,
+        deadlineCoverage: item.total ? Math.round((item.deadlineCount / item.total) * 100) : 0,
+        contactCoverage: item.total ? Math.round((item.contactCount / item.total) * 100) : 0,
+        detailCoverage: item.total ? Math.round((item.detailCount / item.total) * 100) : 0,
+        avgCompleteness: item.total ? Math.round(item.completenessTotal / item.total) : 0
+      }))
+      .sort((a, b) => b.avgCompleteness - a.avgCompleteness);
+
+    const qualitySummary = {
+      ...quality,
+      unitCoverage: quality.total ? Math.round((quality.unitCount / quality.total) * 100) : 0,
+      budgetCoverage: quality.total ? Math.round((quality.budgetCount / quality.total) * 100) : 0,
+      deadlineCoverage: quality.total ? Math.round((quality.deadlineCount / quality.total) * 100) : 0,
+      contactCoverage: quality.total ? Math.round((quality.contactCount / quality.total) * 100) : 0,
+      phoneCoverage: quality.total ? Math.round((quality.phoneCount / quality.total) * 100) : 0,
+      detailCoverage: quality.total ? Math.round((quality.detailCount / quality.total) * 100) : 0,
+      activeCoverage: quality.total ? Math.round((quality.activeCount / quality.total) * 100) : 0
+    };
+
     res.json({
       stats: {
         totalHotspots,
         todayHotspots
       },
+      quality: qualitySummary,
+      sourceQuality,
       runtimeConfig,
       sourceHealth,
       proxyPool: getProxyPoolSnapshot(),

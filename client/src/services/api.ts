@@ -167,6 +167,35 @@ export interface OpsSummary {
     totalHotspots: number;
     todayHotspots: number;
   };
+  quality: {
+    total: number;
+    unitCount: number;
+    budgetCount: number;
+    deadlineCount: number;
+    contactCount: number;
+    phoneCount: number;
+    detailCount: number;
+    activeCount: number;
+    expiredCount: number;
+    highCompletenessCount: number;
+    unitCoverage: number;
+    budgetCoverage: number;
+    deadlineCoverage: number;
+    contactCoverage: number;
+    phoneCoverage: number;
+    detailCoverage: number;
+    activeCoverage: number;
+  };
+  sourceQuality: Array<{
+    source: string;
+    total: number;
+    unitCoverage: number;
+    budgetCoverage: number;
+    deadlineCoverage: number;
+    contactCoverage: number;
+    detailCoverage: number;
+    avgCompleteness: number;
+  }>;
   runtimeConfig: RuntimeConfig;
   sourceHealth: SourceHealthProbe[];
   proxyPool?: Array<{
