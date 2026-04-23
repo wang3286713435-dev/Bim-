@@ -91,6 +91,7 @@
   - 新增历史相关性重算脚本，处理早期 `relevance=78 / 未配置 AI 服务，使用默认分数` 的旧数据
   - 强化详情提取器中的预算 / 联系人 / 电话规则，并提高 `szygcgpt / gzebpubservice` 的补字段优先级
   - 优化 AI 分析输入清洗与短文本重试，减少 OpenClaw 因大段噪声正文导致的超时/失败
+  - 服务器运维侧精简 OpenClaw agent，移除无关 `lizhi` agent，降低本机 AI 运行环境负担
 
 ## v1.1.0
 
