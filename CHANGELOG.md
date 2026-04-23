@@ -55,6 +55,11 @@
 - 飞书回执时间线与同步结果明细
 - 前端补一轮运营视角页面打磨，增强来源诊断与数据质量展示
 
+已落地基础脚本：
+
+- `npm run repair:tender-data -- --dry-run`
+- `npm run repair:tender-data -- --apply --purge-legacy`
+
 ## v1.1.0
 
 发布时间：2026-04-23

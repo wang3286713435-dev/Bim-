@@ -14,6 +14,7 @@
     "db:studio": "prisma studio",
     "db:push": "prisma db push",
     "sync:feishu": "tsx src/scripts/syncFeishuBitable.ts",
+    "repair:tender-data": "tsx src/scripts/repairTenderData.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

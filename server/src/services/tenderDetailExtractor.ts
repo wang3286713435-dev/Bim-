@@ -34,6 +34,16 @@ function compact(value: string | null | undefined, maxLength = 240): string | un
   return text ? text.slice(0, maxLength) : undefined;
 }
 
+function sanitizeTenderUnit(value: string | null | undefined): string | undefined {
+  const text = compact(value, 120);
+  if (!text) return undefined;
+  const cleaned = text
+    .split(/(?:项目名称|预算金额|联系地址|招标人联系人|项目联系人|联系人|联系电话|招标代理机构)/)[0]
+    ?.trim()
+    .replace(/[：:\s]+$/, '');
+  return cleaned || undefined;
+}
+
 function pick(text: string, patterns: RegExp[], maxLength = 120): string | undefined {
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -160,7 +170,11 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
 
   return {
     ...result.tender,
-    unit: tableFields['采购单位'] || tableFields['招标人'] || tableFields['采购人'] || result.tender?.unit || unit,
+    unit: sanitizeTenderUnit(tableFields['采购单位'])
+      || sanitizeTenderUnit(tableFields['招标人'])
+      || sanitizeTenderUnit(tableFields['采购人'])
+      || sanitizeTenderUnit(result.tender?.unit)
+      || sanitizeTenderUnit(unit),
     budgetWan: result.tender?.budgetWan ?? (
       (() => {
         const directYuan = tableFields['预算金额（元）'] || tableFields['预算金额(元)'] || tableFields['预算金额'] || tableFields['招标控制价'];

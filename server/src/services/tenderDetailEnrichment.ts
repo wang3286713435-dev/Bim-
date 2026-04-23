@@ -31,6 +31,23 @@ function looksNoisyStructuredValue(value: string | null | undefined): boolean {
   return /(项目名称|预算金额|采购需求概况|联系人|联系电话|采购单位)[:：]/.test(normalized);
 }
 
+function looksWeakTenderUnit(value: string | null | undefined): boolean {
+  const normalized = normalizeString(value);
+  if (!normalized) return true;
+  if (normalized.length <= 3) return true;
+  return /^(万元|元|预算金额|采购单位|招标人)$/.test(normalized);
+}
+
+function mergePreferredUnit(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (!normalized) continue;
+    if (looksNoisyStructuredValue(normalized) || looksWeakTenderUnit(normalized)) continue;
+    return normalized;
+  }
+  return normalizeString(values.find((value) => normalizeString(value)) ?? null);
+}
+
 function buildSearchResultFromHotspot(hotspot: HotspotWithKeyword, content: string): SearchResult {
   return {
     title: hotspot.title,
@@ -205,6 +222,12 @@ async function enrichSingleHotspot(hotspotId: string): Promise<boolean> {
     const deepExtracted = {
       ...deepRuleExtracted,
       ...deepResult.extracted,
+      unit: mergePreferredUnit(
+        deepRuleExtracted.unit,
+        deepResult.extracted?.unit,
+        basicExtracted.unit,
+        typedHotspot.tenderUnit
+      ) ?? undefined,
       detailSource: deepResult.extracted?.detailSource || deepRuleExtracted.detailSource || 'detail-enrichment+agent-firecrawl',
       detailExtractedAt: new Date()
     };
