@@ -30,6 +30,20 @@ function getQueryNumber(value: unknown): number | undefined {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function getEffectiveDeadlineTime(item: {
+  tenderDeadline?: Date | string | null;
+  tenderBidOpenTime?: Date | string | null;
+  tenderDocDeadline?: Date | string | null;
+}): number | null {
+  const candidates = [item.tenderDeadline, item.tenderBidOpenTime, item.tenderDocDeadline];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const time = new Date(candidate).getTime();
+    if (Number.isFinite(time)) return time;
+  }
+  return null;
+}
+
 // 获取所有热点
 router.get('/', async (req, res) => {
   try {
@@ -38,6 +52,8 @@ router.get('/', async (req, res) => {
       limit = '20', 
       source, 
       searchText,
+      searchMode,
+      includeExpired,
       importance,
       keywordId,
       isReal,
@@ -79,6 +95,7 @@ router.get('/', async (req, res) => {
     const tenderRegionValue = getQueryString(tenderRegion);
     const tenderPlatformValue = getQueryString(tenderPlatform);
     const searchTextValue = getQueryString(searchText);
+    const searchModeValue = getQueryString(searchMode) === 'title' ? 'title' : 'fulltext';
     const minBudgetWan = getQueryNumber(tenderMinBudgetWan);
     const maxBudgetWan = getQueryNumber(tenderMaxBudgetWan);
 
@@ -93,20 +110,25 @@ router.get('/', async (req, res) => {
     }
     if (tenderPlatformValue) where.tenderPlatform = tenderPlatformValue;
     if (searchTextValue) {
+      const textConditions = searchModeValue === 'title'
+        ? [
+            { title: { contains: searchTextValue } }
+          ]
+        : [
+            { title: { contains: searchTextValue } },
+            { content: { contains: searchTextValue } },
+            { summary: { contains: searchTextValue } },
+            { tenderUnit: { contains: searchTextValue } },
+            { tenderProjectCode: { contains: searchTextValue } },
+            { tenderServiceScope: { contains: searchTextValue } },
+            { tenderQualification: { contains: searchTextValue } },
+            { tenderRegion: { contains: searchTextValue } },
+            { tenderCity: { contains: searchTextValue } },
+            { tenderAddress: { contains: searchTextValue } },
+            { tenderContact: { contains: searchTextValue } }
+          ];
       andConditions.push({
-        OR: [
-          { title: { contains: searchTextValue } },
-          { content: { contains: searchTextValue } },
-          { summary: { contains: searchTextValue } },
-          { tenderUnit: { contains: searchTextValue } },
-          { tenderProjectCode: { contains: searchTextValue } },
-          { tenderServiceScope: { contains: searchTextValue } },
-          { tenderQualification: { contains: searchTextValue } },
-          { tenderRegion: { contains: searchTextValue } },
-          { tenderCity: { contains: searchTextValue } },
-          { tenderAddress: { contains: searchTextValue } },
-          { tenderContact: { contains: searchTextValue } }
-        ]
+        OR: textConditions
       });
     }
     if (minBudgetWan !== undefined || maxBudgetWan !== undefined) {
@@ -181,7 +203,7 @@ router.get('/', async (req, res) => {
     const order = (sortOrder as string) === 'asc' ? 'asc' : 'desc';
 
     // importance 和 hot 需要在内存中排序（Prisma 不支持自定义排序）
-    const needsMemorySort = sort === 'importance' || sort === 'hot';
+    const needsMemorySort = sort === 'importance' || sort === 'hot' || sort === 'deadlineStatus';
 
     switch (sort) {
       case 'publishedAt':
@@ -192,6 +214,7 @@ router.get('/', async (req, res) => {
         break;
       case 'importance':
       case 'hot':
+      case 'deadlineStatus':
         orderBy = { createdAt: 'desc' };
         break;
       default:
@@ -199,27 +222,36 @@ router.get('/', async (req, res) => {
         break;
     }
 
-    const [rawHotspots, total] = await Promise.all([
-      prisma.hotspot.findMany({
-        where,
-        orderBy,
-        ...(needsMemorySort ? {} : { skip, take: limitNum }),
-        include: {
-          keyword: {
-            select: { id: true, text: true, category: true }
-          }
+    const excludeExpired = getQueryString(includeExpired) === 'false';
+    const shouldFetchAll = needsMemorySort || excludeExpired;
+
+    const rawHotspots = await prisma.hotspot.findMany({
+      where,
+      orderBy,
+      ...(shouldFetchAll ? {} : { skip, take: limitNum }),
+      include: {
+        keyword: {
+          select: { id: true, text: true, category: true }
         }
-      }),
-      prisma.hotspot.count({ where })
-    ]);
+      }
+    });
+
+    const filteredRawHotspots = excludeExpired
+      ? rawHotspots.filter((item) => {
+          const deadline = getEffectiveDeadlineTime(item);
+          return deadline == null || deadline >= Date.now();
+        })
+      : rawHotspots;
 
     let hotspots;
-    if (needsMemorySort) {
-      const sorted = sortHotspots(rawHotspots, sort, order as 'asc' | 'desc');
+    if (shouldFetchAll) {
+      const sorted = sortHotspots(filteredRawHotspots, sort, order as 'asc' | 'desc');
       hotspots = sorted.slice(skip, skip + limitNum);
     } else {
-      hotspots = rawHotspots;
+      hotspots = filteredRawHotspots;
     }
+
+    const total = shouldFetchAll ? filteredRawHotspots.length : await prisma.hotspot.count({ where });
 
     res.json({
       data: hotspots,

@@ -10,6 +10,9 @@ export interface SortableHotspot {
   relevance: number;
   publishedAt: Date | string | null;
   createdAt: Date | string;
+  tenderDeadline?: Date | string | null;
+  tenderBidOpenTime?: Date | string | null;
+  tenderDocDeadline?: Date | string | null;
 }
 
 export const IMPORTANCE_ORDER: Record<string, number> = {
@@ -33,6 +36,27 @@ export function compareImportance(a: SortableHotspot, b: SortableHotspot): numbe
 function toTimestamp(d: Date | string | null): number {
   if (!d) return 0;
   return typeof d === 'string' ? new Date(d).getTime() : d.getTime();
+}
+
+function getEffectiveDeadline(item: SortableHotspot): number {
+  return (
+    toTimestamp(item.tenderDeadline ?? null)
+    || toTimestamp(item.tenderBidOpenTime ?? null)
+    || toTimestamp(item.tenderDocDeadline ?? null)
+  );
+}
+
+function compareDeadlineStatus(a: SortableHotspot, b: SortableHotspot): number {
+  const now = Date.now();
+  const deadlineA = getEffectiveDeadline(a);
+  const deadlineB = getEffectiveDeadline(b);
+
+  const bucketA = !deadlineA ? 2 : deadlineA < now ? 3 : deadlineA - now <= 7 * 24 * 60 * 60 * 1000 ? 0 : 1;
+  const bucketB = !deadlineB ? 2 : deadlineB < now ? 3 : deadlineB - now <= 7 * 24 * 60 * 60 * 1000 ? 0 : 1;
+
+  if (bucketA !== bucketB) return bucketA - bucketB;
+  if (deadlineA && deadlineB) return deadlineA - deadlineB;
+  return compareImportance(a, b);
 }
 
 export function sortHotspots<T extends SortableHotspot>(
@@ -73,6 +97,10 @@ export function sortHotspots<T extends SortableHotspot>(
       case 'hot':
         result = calcHotScore(a) - calcHotScore(b);
         break;
+
+      case 'deadlineStatus':
+        result = compareDeadlineStatus(a, b);
+        return desc ? result : -result;
 
       default: // createdAt
         result = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);

@@ -1,7 +1,25 @@
 import type { SearchResult, TenderMetadata } from '../types.js';
 
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function stripHtml(value: string): string {
+  return decodeHtml(value)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>|<\/div>|<\/tr>|<\/li>|<\/h\d>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\u00a0/g, ' ');
+}
+
 function normalizeText(value: string | null | undefined): string {
-  return (value ?? '')
+  return stripHtml(value ?? '')
     .replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
@@ -80,8 +98,22 @@ function section(text: string, labels: string[], maxLength = 600): string | unde
   return undefined;
 }
 
+function extractTableFields(rawText: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  const pattern = /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+  for (const match of rawText.matchAll(pattern)) {
+    const label = compact(stripHtml(match[1]), 80)?.replace(/[：:]\s*$/, '');
+    const value = compact(stripHtml(match[2]), 500);
+    if (!label || !value) continue;
+    fields[label] = value;
+  }
+  return fields;
+}
+
 export function extractTenderDetailFields(result: SearchResult): TenderMetadata {
-  const text = normalizeText(`${result.title}\n${result.content}`);
+  const rawText = `${result.title}\n${result.content}`;
+  const text = normalizeText(rawText);
+  const tableFields = extractTableFields(rawText);
   const deadline = pickDate(text, [
     '投标文件递交截止时间',
     '递交投标文件截止时间',
@@ -128,16 +160,25 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
 
   return {
     ...result.tender,
-    unit: result.tender?.unit || unit,
-    budgetWan: result.tender?.budgetWan ?? parseAmountWan(text),
+    unit: tableFields['采购单位'] || tableFields['招标人'] || tableFields['采购人'] || result.tender?.unit || unit,
+    budgetWan: result.tender?.budgetWan ?? (
+      (() => {
+        const directYuan = tableFields['预算金额（元）'] || tableFields['预算金额(元)'] || tableFields['预算金额'] || tableFields['招标控制价'];
+        if (directYuan) {
+          const numeric = Number.parseFloat(directYuan.replace(/,/g, '').replace(/[^\d.]/g, ''));
+          if (Number.isFinite(numeric)) return numeric >= 10000 ? numeric / 10000 : numeric;
+        }
+        return parseAmountWan(text);
+      })()
+    ),
     deadline: result.tender?.deadline || deadline || bidOpenTime,
     projectCode,
-    contact,
-    phone,
+    contact: tableFields['联系人'] || contact,
+    phone: tableFields['联系电话'] || tableFields['联系人电话'] || phone,
     email,
     bidOpenTime,
     docDeadline,
-    serviceScope: section(text, ['招标范围', '采购内容', '服务内容', '项目概况', '建设内容', '工作内容']),
+    serviceScope: tableFields['采购需求概况'] || section(text, ['招标范围', '采购内容', '服务内容', '项目概况', '建设内容', '工作内容']),
     qualification: section(text, ['投标人资格要求', '供应商资格要求', '资格要求', '资质要求']),
     address,
     detailSource: result.content.includes('--- Firecrawl 正文 ---') ? 'firecrawl+rules' : 'source-detail+rules',

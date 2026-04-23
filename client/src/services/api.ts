@@ -193,6 +193,37 @@ export interface DetailEnrichmentStatus {
   data: DetailEnrichmentStatusItem[];
 }
 
+export interface HealthStatus {
+  status: string;
+  version: string;
+  mode: string;
+  timestamp: string;
+  integrations: {
+    feishuWebhookEnabled: boolean;
+    feishuBitableEnabled: boolean;
+  };
+  scheduler: {
+    cron: string;
+    intervalHours: number;
+    description: string;
+  };
+  hotspotCheckQueue: {
+    running: boolean;
+    lastStartedAt?: string;
+    lastFinishedAt?: string;
+    lastError?: string;
+  };
+  detailEnrichmentQueue: {
+    running: boolean;
+    pendingCount: number;
+    processedCount: number;
+    lastStartedAt?: string;
+    lastFinishedAt?: string;
+    lastError?: string;
+    currentHotspotId?: string;
+  };
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
@@ -213,6 +244,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   return response.json();
 }
+
+export const healthApi = {
+  get: () => request<HealthStatus>('/health')
+};
 
 // Keywords API
 export const keywordsApi = {
@@ -245,6 +280,8 @@ export const hotspotsApi = {
     page?: number; 
     limit?: number; 
     searchText?: string;
+    searchMode?: 'title' | 'fulltext';
+    includeExpired?: 'true' | 'false';
     source?: string; 
     importance?: string; 
     keywordId?: string;

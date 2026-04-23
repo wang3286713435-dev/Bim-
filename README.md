@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.1.0`
+- `v1.2.0`
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -97,7 +97,7 @@ npm run dev
 - 前端：[http://localhost:5173](http://localhost:5173)
 - 后端：[http://localhost:3001](http://localhost:3001)
 
-### v1.1 单应用运行
+### v1.2 单应用运行
 
 ```bash
 cd /Users/Weishengsu/dev/yupi-hot-monitor/server
@@ -172,7 +172,7 @@ npm run build
 
 ## 部署建议
 
-腾讯云 `2 核 4G` 可以先承载 `v1.1`：
+腾讯云 `2 核 4G` 可以先承载 `v1.2`：
 
 - `pm2` 或 `systemd` 托管 `node dist/index.js`
 - `Nginx` 反向代理到 `3001`
@@ -195,7 +195,7 @@ npm run start
 ## 版本计划
 
 - `v1.1.0`：单应用部署、飞书同步、投标机会清单、详情页、数据库模糊搜索
-- `v1.2.0`：继续打磨前端搜索体验、主题切换与更轻量的列表交互
+- `v1.2.0`：搜索建议、保存筛选视图、批量操作、浅色主题收口、监控日志与列表/筛选体验优化
 
 ## License
 

@@ -67,6 +67,11 @@ app.get('/api/health', async (req, res) => {
       feishuWebhookEnabled: isFeishuWebhookEnabled(),
       feishuBitableEnabled: isFeishuBitableEnabled()
     },
+    scheduler: {
+      cron: '0 */2 * * *',
+      intervalHours: 2,
+      description: '每 2 小时自动扫描一次'
+    },
     hotspotCheckQueue: getHotspotCheckQueueState(),
     detailEnrichmentQueue: getDetailEnrichmentQueueState(),
     timestamp: new Date().toISOString()
@@ -111,8 +116,8 @@ io.on('connection', (socket) => {
   });
 });
 
-// Scheduled job: Run hotspot check every 30 minutes
-cron.schedule('*/30 * * * *', async () => {
+// Scheduled job: Run hotspot check every 2 hours
+cron.schedule('0 */2 * * *', async () => {
   console.log('🔄 Running scheduled hotspot check...');
   try {
     const result = startHotspotCheckInBackground(io, 'scheduled');
@@ -139,7 +144,7 @@ httpServer.listen(PORT, async () => {
   🔥 BIM Tender Monitor v1.1 启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
-  ⏰ Hotspot check scheduled every 30 minutes
+  ⏰ Hotspot check scheduled every 2 hours
   🖥 Frontend ${hasClientBuild ? `served from ${clientDistPath}` : 'not built yet'}
   `);
 });

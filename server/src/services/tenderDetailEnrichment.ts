@@ -25,6 +25,12 @@ function normalizeString(value: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function looksNoisyStructuredValue(value: string | null | undefined): boolean {
+  const normalized = normalizeString(value);
+  if (!normalized) return false;
+  return /(项目名称|预算金额|采购需求概况|联系人|联系电话|采购单位)[:：]/.test(normalized);
+}
+
 function buildSearchResultFromHotspot(hotspot: HotspotWithKeyword, content: string): SearchResult {
   return {
     title: hotspot.title,
@@ -94,6 +100,9 @@ function shouldEnrichHotspot(hotspot: HotspotWithKeyword): boolean {
 function mergePreferredText(current: string | null | undefined, next: string | null | undefined): string | null {
   const currentValue = normalizeString(current);
   const nextValue = normalizeString(next);
+  if (looksNoisyStructuredValue(currentValue) && nextValue) {
+    return nextValue;
+  }
   if (currentValue && currentValue.length >= (nextValue?.length ?? 0)) {
     return currentValue;
   }
@@ -106,6 +115,38 @@ function mergePreferredDate(current: Date | null | undefined, next: Date | null 
 
 function mergePreferredNumber(current: number | null | undefined, next: number | null | undefined): number | null {
   return current ?? next ?? null;
+}
+
+function extractSzggzyContentId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes('szggzy.com')) return null;
+    return parsed.searchParams.get('contentId');
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSzggzyDetailContent(url: string): Promise<string | null> {
+  const contentId = extractSzggzyContentId(url);
+  if (!contentId) return null;
+
+  try {
+    const response = await fetch(`https://www.szggzy.com/cms/api/v1/trade/content/detail?contentId=${encodeURIComponent(contentId)}`, {
+      headers: {
+        Referer: url,
+        Accept: 'application/json, text/plain, */*'
+      }
+    });
+
+    if (!response.ok) return null;
+    const payload = await response.json() as { data?: { txt?: string } };
+    const detailText = payload?.data?.txt;
+    return typeof detailText === 'string' && detailText.trim() ? detailText : null;
+  } catch (error) {
+    console.warn('Failed to fetch szggzy detail content:', url, error);
+    return null;
+  }
 }
 
 async function enrichSingleHotspot(hotspotId: string): Promise<boolean> {
@@ -123,7 +164,10 @@ async function enrichSingleHotspot(hotspotId: string): Promise<boolean> {
   const typedHotspot = hotspot as unknown as HotspotWithKeyword;
   if (!shouldEnrichHotspot(typedHotspot)) return false;
 
-  const basicMarkdown = await scrapeWithFirecrawl(hotspot.url);
+  const szggzyDetailContent = hotspot.source === 'szggzy'
+    ? await fetchSzggzyDetailContent(hotspot.url)
+    : null;
+  const basicMarkdown = szggzyDetailContent || await scrapeWithFirecrawl(hotspot.url);
   const basicMergedContent = basicMarkdown
     ? [hotspot.content, '--- Detail Enrichment ---', basicMarkdown].filter(Boolean).join('\n')
     : hotspot.content;
@@ -145,7 +189,9 @@ async function enrichSingleHotspot(hotspotId: string): Promise<boolean> {
   });
   const prevScore = getTenderFieldCompletenessScore(typedHotspot);
   let finalContent = basicMergedContent;
-  let finalDetailSource = basicMarkdown ? 'detail-enrichment+firecrawl' : (basicExtracted.detailSource ?? typedHotspot.tenderDetailSource);
+  let finalDetailSource = szggzyDetailContent
+    ? 'szggzy-api+rules'
+    : (basicMarkdown ? 'detail-enrichment+firecrawl' : (basicExtracted.detailSource ?? typedHotspot.tenderDetailSource));
   let finalExtracted = basicExtracted;
   let nextScore = basicScore;
 
