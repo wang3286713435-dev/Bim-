@@ -44,7 +44,14 @@ type SourceRuntimeState = {
   lastFailureAt?: number;
 };
 
+type ProbeCacheEntry = {
+  cachedAt: number;
+  data: TenderSourceProbe[];
+};
+
 const sourceRuntimeState = new Map<TenderSourceId, SourceRuntimeState>();
+const probeCache = new Map<string, ProbeCacheEntry>();
+const PROBE_CACHE_TTL_MS = Number.parseInt(process.env.TENDER_SOURCE_PROBE_CACHE_TTL_MS || '120000', 10);
 
 function getSourceState(sourceId: TenderSourceId): SourceRuntimeState {
   const existing = sourceRuntimeState.get(sourceId);
@@ -229,9 +236,15 @@ export async function searchTenderSourceAcrossQueries(
 }
 
 export async function probeTenderSources(query = 'BIM', limit = 3): Promise<TenderSourceProbe[]> {
+  const cacheKey = `${query.trim() || 'BIM'}::${limit}`;
+  const cached = probeCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < PROBE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   const enabledIds = new Set((await getEnabledTenderSources()).map(source => source.id));
 
-  return Promise.all(TENDER_SOURCE_ADAPTERS.map(async source => {
+  const data = await Promise.all(TENDER_SOURCE_ADAPTERS.map(async source => {
     const started = Date.now();
     const enabled = enabledIds.has(source.id);
     const probeQueries = buildProbeQueries(source.id, query);
@@ -312,4 +325,11 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
       };
     }
   }));
+
+  probeCache.set(cacheKey, {
+    cachedAt: Date.now(),
+    data
+  });
+
+  return data;
 }
