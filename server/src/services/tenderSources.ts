@@ -323,9 +323,10 @@ export async function searchGzebpubservice(query: string, limit = 20): Promise<S
   await gzebLimiter.wait();
 
   try {
-    const response = await axios.post<GzebResponse>(
-      'http://www.gzebpubservice.cn/inteligentsearchfw/rest/esinteligentsearch/getFullTextDataNew',
-      {
+    const response = await axiosWithSourceProxy<GzebResponse>('gzebpubservice', {
+      method: 'post',
+      url: 'http://www.gzebpubservice.cn/inteligentsearchfw/rest/esinteligentsearch/getFullTextDataNew',
+      data: {
         pn: 1,
         rn: limit,
         sdt: '',
@@ -355,14 +356,12 @@ export async function searchGzebpubservice(query: string, limit = 20): Promise<S
         searchRange: null,
         isBusiness: '1'
       },
-      {
-        headers: {
-          'Content-Type': 'application/json;charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0'
-        },
-        timeout: 20000
-      }
-    );
+      headers: {
+        'Content-Type': 'application/json;charset=UTF-8',
+        'User-Agent': 'Mozilla/5.0'
+      },
+      timeout: 20000
+    });
 
     if (response.data.code !== 200 || !response.data.content) {
       console.log(`GZEB search: no results or API error (code: ${response.data.code ?? 'unknown'})`);
