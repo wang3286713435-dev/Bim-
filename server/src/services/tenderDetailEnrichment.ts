@@ -111,7 +111,11 @@ export function getTenderFieldCompletenessScore(hotspot: Pick<
 }
 
 function shouldEnrichHotspot(hotspot: HotspotWithKeyword): boolean {
-  return getTenderFieldCompletenessScore(hotspot) < 70;
+  if (getTenderFieldCompletenessScore(hotspot) < 70) return true;
+  if (hotspot.source === 'szygcgpt' || hotspot.source === 'gzebpubservice') {
+    return hotspot.tenderBudgetWan == null || !hotspot.tenderContact || !hotspot.tenderPhone;
+  }
+  return false;
 }
 
 function mergePreferredText(current: string | null | undefined, next: string | null | undefined): string | null {

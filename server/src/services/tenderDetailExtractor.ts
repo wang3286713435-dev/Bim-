@@ -56,6 +56,7 @@ function pick(text: string, patterns: RegExp[], maxLength = 120): string | undef
 
 function parseAmountWan(text: string): number | undefined {
   const wan = text.match(/(?:预算|控制价|最高限价|估算价|合同估算价|招标控制价)[^\d]{0,20}([\d,.]+)\s*万(?:元)?/i)
+    || text.match(/(?:采购预算|预算总金额|项目预算|含税总价|含税控制价)[^\d]{0,20}([\d,.]+)\s*万(?:元)?/i)
     || text.match(/([\d,.]+)\s*万(?:元)?/i);
   if (wan) {
     const amount = Number.parseFloat(wan[1].replace(/,/g, ''));
@@ -63,8 +64,10 @@ function parseAmountWan(text: string): number | undefined {
   }
 
   const yuan = text.match(/(?:预算|控制价|最高限价|估算价|合同估算价|招标控制价)[^\d]{0,20}([\d,.]+)\s*元/i);
-  if (yuan) {
-    const amount = Number.parseFloat(yuan[1].replace(/,/g, ''));
+  const yuanAlt = text.match(/(?:采购预算|预算总金额|项目预算|含税总价|含税控制价)[^\d]{0,20}([\d,.]+)\s*元/i);
+  const yuanMatch = yuan || yuanAlt;
+  if (yuanMatch) {
+    const amount = Number.parseFloat(yuanMatch[1].replace(/,/g, ''));
     return Number.isFinite(amount) ? amount / 10000 : undefined;
   }
 
@@ -153,10 +156,13 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
   ], 80);
 
   const phone = pick(text, [
+    /(?:联系方式|联系电话|联系人电话|电话|联系人及电话)[：:\s]*((?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?|1[3-9]\d{9})/,
     /(?:联系电话|联系人电话|电话|联系方式)[：:\s]*((?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?|1[3-9]\d{9})/
   ], 40);
 
   const contact = pick(text, [
+    /(?:联系人及电话)[：:\s]*([^\n；;，,（(]{2,30})/,
+    /(?:联系人姓名|项目联系人|联系人|招标联系人|采购联系人)[：:\s]*([^\n；;，,电话联系方式]{2,30})/,
     /(?:项目联系人|联系人|招标联系人|采购联系人)[：:\s]*([^\n；;，,电话联系方式]{2,30})/
   ], 40);
 
@@ -173,11 +179,19 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
     unit: sanitizeTenderUnit(tableFields['采购单位'])
       || sanitizeTenderUnit(tableFields['招标人'])
       || sanitizeTenderUnit(tableFields['采购人'])
+      || sanitizeTenderUnit(tableFields['招标单位'])
+      || sanitizeTenderUnit(tableFields['采购机构'])
       || sanitizeTenderUnit(result.tender?.unit)
       || sanitizeTenderUnit(unit),
     budgetWan: result.tender?.budgetWan ?? (
       (() => {
-        const directYuan = tableFields['预算金额（元）'] || tableFields['预算金额(元)'] || tableFields['预算金额'] || tableFields['招标控制价'];
+        const directYuan = tableFields['预算金额（元）']
+          || tableFields['预算金额(元)']
+          || tableFields['预算金额']
+          || tableFields['招标控制价']
+          || tableFields['采购预算']
+          || tableFields['项目预算']
+          || tableFields['预算总金额'];
         if (directYuan) {
           const numeric = Number.parseFloat(directYuan.replace(/,/g, '').replace(/[^\d.]/g, ''));
           if (Number.isFinite(numeric)) return numeric >= 10000 ? numeric / 10000 : numeric;
@@ -187,8 +201,8 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
     ),
     deadline: result.tender?.deadline || deadline || bidOpenTime,
     projectCode,
-    contact: tableFields['联系人'] || contact,
-    phone: tableFields['联系电话'] || tableFields['联系人电话'] || phone,
+    contact: tableFields['联系人'] || tableFields['项目联系人'] || contact,
+    phone: tableFields['联系电话'] || tableFields['联系人电话'] || tableFields['联系方式'] || phone,
     email,
     bidOpenTime,
     docDeadline,

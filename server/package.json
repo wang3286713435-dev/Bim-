@@ -15,6 +15,7 @@
     "db:push": "prisma db push",
     "sync:feishu": "tsx src/scripts/syncFeishuBitable.ts",
     "repair:tender-data": "tsx src/scripts/repairTenderData.ts",
+    "reanalyze:tender-relevance": "tsx src/scripts/reanalyzeTenderRelevance.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

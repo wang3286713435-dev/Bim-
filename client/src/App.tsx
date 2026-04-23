@@ -1196,6 +1196,69 @@ function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSumma
   );
 }
 
+function SourceGovernancePanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  if (!summary) return null;
+
+  const governanceRows = summary.sourceQuality
+    .map((item) => {
+      const failure = summary.runFailureSummary24h[item.source] || 0;
+      const score =
+        (100 - item.avgCompleteness)
+        + (100 - item.contactCoverage) * 0.35
+        + (100 - item.budgetCoverage) * 0.25
+        + failure * 3;
+      return {
+        ...item,
+        failure,
+        score: Math.round(score),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return (
+    <section className={cn(
+      'rounded-[24px] border p-5 shadow-[0_18px_56px_rgba(0,0,0,0.2)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5">
+        <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源治理优先级</h3>
+        <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>把“字段缺失”和“运行异常”放在一起看，帮助我们决定下一轮该先治哪个来源。</p>
+      </div>
+      <div className="space-y-3">
+        {governanceRows.map((item, index) => (
+          <div key={item.source} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>
+                  {index + 1}. {getSourceLabel(item.source)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  治理指数 {item.score} · 轮次异常 {item.failure} · 平均完整度 {item.avgCompleteness}
+                </p>
+              </div>
+              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(index === 0 ? 'danger' : index === 1 ? 'warning' : 'default', themeMode))}>
+                {index === 0 ? '优先治理' : index === 1 ? '次优先' : '观察'}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                预算覆盖 {item.budgetCoverage}%
+              </div>
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                联系人覆盖 {item.contactCoverage}%
+              </div>
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                截止覆盖 {item.deadlineCoverage}%
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function HeaderProgress({
   progressValue,
   progressLabel,
@@ -2470,6 +2533,8 @@ function App() {
               <QualityCoverageCard summary={opsSummary} themeMode={themeMode} />
               <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
             </section>
+
+            <SourceGovernancePanel summary={opsSummary} themeMode={themeMode} />
 
             <section className={cn(
               'rounded-[32px] border p-6 shadow-[0_24px_100px_rgba(0,0,0,0.3)]',
