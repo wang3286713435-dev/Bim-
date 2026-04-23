@@ -1031,7 +1031,8 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
             </div>
             <div className={cn('mt-4 space-y-2 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>
               <div className="flex items-center justify-between"><span>命中数量</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{source.count}</span></div>
-              <div className="flex items-center justify-between"><span>24h 探测失败</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{summary.failureSummary24h[source.id] || 0}</span></div>
+              <div className="flex items-center justify-between"><span>24h 探测失败</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{summary.probeFailureSummary24h[source.id] || summary.failureSummary24h[source.id] || 0}</span></div>
+              <div className="flex items-center justify-between"><span>24h 轮次异常</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{summary.runFailureSummary24h[source.id] || 0}</span></div>
               <div className="flex items-center justify-between"><span>上次成功</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{source.lastSuccessAt ? relativeTime(source.lastSuccessAt) : '暂无'}</span></div>
             </div>
             {source.sampleTitle && <p className="mt-4 line-clamp-2 text-xs leading-5 text-slate-500">样例：{source.sampleTitle}</p>}
@@ -1039,7 +1040,7 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
           </div>
         ))}
       </div>
-      <p className="mt-4 text-xs leading-6 text-slate-500">这里统计的是来源探测失败次数，不是“整轮抓取失败次数”。同一轮里一个来源对多个关键词连续失败，会累计到这里。</p>
+      <p className="mt-4 text-xs leading-6 text-slate-500">“24h 探测失败”统计的是 probe 级失败次数；“24h 轮次异常”统计的是同一轮抓取里该来源至少失败过一次的轮次数，更接近真实稳定性。</p>
     </section>
   );
 }
@@ -1353,6 +1354,8 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
       tone: isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/5 text-slate-200',
     },
   ];
+  const totalProbeFailures = summary ? Object.values(summary.probeFailureSummary24h || summary.failureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
+  const totalRunFailures = summary ? Object.values(summary.runFailureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
 
   return (
     <section className={cn(
@@ -1401,6 +1404,8 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>多维表同步</span><span>{health?.integrations.feishuBitableEnabled ? '已启用' : '未启用'}</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>详情补全队列</span><span>{health?.detailEnrichmentQueue.running ? '补全中' : '空闲'}</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>健康心跳</span><span>{health?.timestamp ? relativeTime(health.timestamp) : '暂无'}</span></div>
+            <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>24h 探测失败</span><span>{totalProbeFailures} 次</span></div>
+            <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>24h 轮次异常</span><span>{totalRunFailures} 轮</span></div>
           </div>
         </div>
       </div>

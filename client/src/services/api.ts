@@ -171,6 +171,8 @@ export interface OpsSummary {
   recentRuns: CrawlRun[];
   latestRun: CrawlRun | null;
   failureSummary24h: Record<string, number>;
+  probeFailureSummary24h: Record<string, number>;
+  runFailureSummary24h: Record<string, number>;
 }
 
 export interface DetailEnrichmentStatusItem {

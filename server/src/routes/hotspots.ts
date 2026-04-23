@@ -321,7 +321,7 @@ router.get('/ops/summary', async (req, res) => {
       todayHotspots,
       latestRun,
       recentRuns,
-      recentFailures
+      recentSourceProbes
     ] = await Promise.all([
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES }, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
@@ -345,17 +345,45 @@ router.get('/ops/summary', async (req, res) => {
           completedAt: true
         }
       }),
-      prisma.sourceProbe.groupBy({
-        by: ['sourceId'],
+      prisma.sourceProbe.findMany({
         where: {
-          createdAt: { gte: since },
-          ok: false
+          createdAt: { gte: since }
         },
-        _count: { sourceId: true }
+        select: {
+          sourceId: true,
+          runId: true,
+          ok: true
+        }
       })
     ]);
 
     const sourceHealth = await probeTenderSources('BIM', 1);
+    const probeFailureSummary24h: Record<string, number> = {};
+    const runFailureSummary24h: Record<string, number> = {};
+    const sourceRunState = new Map<string, { sourceId: string; hasFailure: boolean }>();
+
+    for (const probe of recentSourceProbes) {
+      if (!probe.ok) {
+        probeFailureSummary24h[probe.sourceId] = (probeFailureSummary24h[probe.sourceId] || 0) + 1;
+      }
+
+      const key = `${probe.runId}:${probe.sourceId}`;
+      const current = sourceRunState.get(key) || {
+        sourceId: probe.sourceId,
+        hasFailure: false
+      };
+
+      if (!probe.ok) {
+        current.hasFailure = true;
+      }
+
+      sourceRunState.set(key, current);
+    }
+
+    for (const item of sourceRunState.values()) {
+      if (!item.hasFailure) continue;
+      runFailureSummary24h[item.sourceId] = (runFailureSummary24h[item.sourceId] || 0) + 1;
+    }
 
     res.json({
       stats: {
@@ -366,10 +394,9 @@ router.get('/ops/summary', async (req, res) => {
       sourceHealth,
       recentRuns,
       latestRun,
-      failureSummary24h: recentFailures.reduce((acc: Record<string, number>, item: { sourceId: string; _count: { sourceId: number } }) => {
-        acc[item.sourceId] = item._count.sourceId;
-        return acc;
-      }, {} as Record<string, number>)
+      failureSummary24h: probeFailureSummary24h,
+      probeFailureSummary24h,
+      runFailureSummary24h
     });
   } catch (error) {
     console.error('Error fetching ops summary:', error);
