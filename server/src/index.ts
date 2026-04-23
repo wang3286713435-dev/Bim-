@@ -51,7 +51,7 @@ app.get('/api/health', async (req, res) => {
   const runtimeConfig = await getRuntimeConfig();
   res.json({
     status: 'ok',
-    version: '1.1.0',
+    version: '1.2.0',
     mode: 'bim-tender-monitor',
     frontend: {
       mode: hasClientBuild ? 'served-by-backend' : 'dev-server-required'
@@ -141,7 +141,7 @@ httpServer.listen(PORT, async () => {
   }
 
   console.log(`
-  🔥 BIM Tender Monitor v1.1 启动成功!
+  🔥 BIM Tender Monitor v1.2 启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check scheduled every 2 hours
