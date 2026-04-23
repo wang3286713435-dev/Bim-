@@ -172,10 +172,12 @@ function getRegionLabel(hotspot: FeishuHotspot): string {
 }
 
 function getDetailReliability(hotspot: FeishuHotspot): string {
+  if (hotspot.url.includes('show-bid-opening/list') || /中标|成交|结果公告|候选人公示/.test(hotspot.title)) return '低可信结果页';
+  if (hotspot.tenderDetailSource?.includes('firecrawl-detail-json') || hotspot.tenderDetailSource?.includes('detail-enrichment+agent-firecrawl')) return '深抓取详情';
+  if (hotspot.tenderDetailSource?.includes('szggzy-api+rules') || hotspot.tenderDetailSource?.includes('source-detail+rules') || hotspot.tenderDetailSource?.includes('detail-enrichment')) return '官方详情已解析';
   if (hotspot.url.includes('szggzy.com/globalSearch/details.html')) return '深圳原始详情';
   if (hotspot.url.includes('nodeId=')) return '已解析详情';
-  if (hotspot.url.includes('gzebpubservice.cn')) return '已校验链接';
-  if (hotspot.tenderDetailSource?.includes('firecrawl-detail-json')) return '深抓取详情';
+  if (hotspot.url.includes('detailTop') || hotspot.url.includes('gzebpubservice.cn/jyfw/')) return '原始详情已校验';
   if (hotspot.tenderDetailSource?.includes('firecrawl')) return 'Firecrawl正文';
   return '待人工核验';
 }

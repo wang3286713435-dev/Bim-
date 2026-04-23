@@ -83,6 +83,7 @@ export interface SourceHealthProbe {
   ok: boolean;
   count: number;
   elapsedMs: number;
+  probeQueries?: string[];
   sampleTitle?: string;
   sampleUrl?: string;
   error?: string;

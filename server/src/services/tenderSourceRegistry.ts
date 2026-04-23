@@ -25,6 +25,7 @@ export interface TenderSourceProbe {
   ok: boolean;
   count: number;
   elapsedMs: number;
+  probeQueries?: string[];
   sampleTitle?: string;
   sampleUrl?: string;
   error?: string;
@@ -163,6 +164,24 @@ export async function buildSearchQueries(keyword: string, expandedKeywords: stri
   return [...new Set(candidates.map(query => query.trim()).filter(Boolean))].slice(0, Math.max(1, maxVariants));
 }
 
+function buildProbeQueries(sourceId: TenderSourceId, query: string): string[] {
+  const normalized = query.trim() || 'BIM';
+  const variants = new Set<string>([normalized]);
+
+  if (sourceId === 'gzebpubservice') {
+    variants.add('BIM');
+    variants.add('建筑信息模型');
+    variants.add('智慧建造');
+  } else if (sourceId === 'szggzy' || sourceId === 'guangdong') {
+    variants.add('BIM');
+    variants.add('建筑信息模型');
+  } else {
+    variants.add('BIM');
+  }
+
+  return [...variants].filter(Boolean).slice(0, sourceId === 'gzebpubservice' ? 4 : 3);
+}
+
 export async function searchTenderSourceAcrossQueries(
   source: TenderSourceAdapter,
   queries: string[],
@@ -215,6 +234,7 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
   return Promise.all(TENDER_SOURCE_ADAPTERS.map(async source => {
     const started = Date.now();
     const enabled = enabledIds.has(source.id);
+    const probeQueries = buildProbeQueries(source.id, query);
 
     if (!enabled) {
       return {
@@ -224,23 +244,48 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         ok: false,
         count: 0,
         elapsedMs: 0,
+        probeQueries,
         error: 'source disabled'
       };
     }
 
     try {
-      const rows = await source.search(query, limit);
-      markSourceSuccess(source.id);
+      const aggregated: SearchResult[] = [];
+      let lastError: string | undefined;
+      for (const probeQuery of probeQueries) {
+        try {
+          const rows = await source.search(probeQuery, limit);
+          if (rows.length > 0) {
+            aggregated.push(...rows);
+            break;
+          }
+          lastError = `probe empty: ${probeQuery}`;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const uniqueRows = aggregated.filter((item, index, list) =>
+        index === list.findIndex((candidate) => candidate.url === item.url && candidate.source === item.source)
+      );
+
+      if (uniqueRows.length > 0) {
+        markSourceSuccess(source.id);
+      } else if (lastError) {
+        markSourceFailure(source.id, lastError);
+      }
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
       return {
         id: source.id,
         name: source.name,
         enabled,
-        ok: rows.length > 0,
-        count: rows.length,
+        ok: uniqueRows.length > 0,
+        count: uniqueRows.length,
         elapsedMs: Date.now() - started,
-        sampleTitle: rows[0]?.title,
-        sampleUrl: rows[0]?.url,
+        probeQueries,
+        sampleTitle: uniqueRows[0]?.title,
+        sampleUrl: uniqueRows[0]?.url,
+        error: uniqueRows.length > 0 ? undefined : lastError,
         failureCount: runtime.failureCount,
         circuitOpen: runtime.circuitOpen,
         cooldownRemainingMs: runtime.cooldownRemainingMs,
@@ -257,6 +302,7 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         ok: false,
         count: 0,
         elapsedMs: Date.now() - started,
+        probeQueries,
         error: error instanceof Error ? error.message : String(error),
         failureCount: runtime.failureCount,
         circuitOpen: runtime.circuitOpen,

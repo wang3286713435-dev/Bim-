@@ -384,15 +384,22 @@ function getNoticeStage(noticeType: string | null): { label: string; tone: strin
   return { label: text, tone: 'border-white/10 bg-white/5 text-slate-300' };
 }
 
-function getDetailReliability(url: string): { label: string; tone: string } {
-  if (url.includes('szggzy.com/globalSearch/details.html')) {
-    return { label: '深圳原始详情', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
+function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDetailSource'>): { label: string; tone: string } {
+  const url = hotspot.url || '';
+  const source = hotspot.tenderDetailSource || '';
+  const title = hotspot.title || '';
+
+  if (url.includes('show-bid-opening/list') || /中标|成交|结果公告|候选人公示/.test(title)) {
+    return { label: '低可信结果页', tone: 'border-rose-400/25 bg-rose-500/12 text-rose-200' };
   }
-  if (url.includes('nodeId=')) {
-    return { label: '已解析详情', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
+  if (source.includes('firecrawl-detail-json') || source.includes('detail-enrichment+agent-firecrawl')) {
+    return { label: '深抓取详情', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
   }
-  if (url.includes('jyxt.gzggzy.cn') || url.includes('gzebpubservice.cn')) {
-    return { label: '已校验链接', tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200' };
+  if (source.includes('szggzy-api+rules') || source.includes('source-detail+rules') || source.includes('detail-enrichment')) {
+    return { label: '官方详情已解析', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
+  }
+  if (url.includes('szggzy.com/globalSearch/details.html') || url.includes('nodeId=') || url.includes('detailTop') || /gzebpubservice\.cn\/jyfw\//.test(url)) {
+    return { label: '原始详情已校验', tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200' };
   }
   return { label: '待人工核验', tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200' };
 }
@@ -664,7 +671,7 @@ function HotspotDetailPage({
   const isLight = themeMode === 'light';
   const deadline = hotspot ? getDeadlineInfo(getEffectiveDeadline(hotspot)) : null;
   const stage = hotspot ? getNoticeStage(hotspot.tenderNoticeType) : null;
-  const detailReliability = hotspot ? getDetailReliability(hotspot.url) : null;
+  const detailReliability = hotspot ? getDetailReliability(hotspot) : null;
   const region = hotspot ? [hotspot.tenderRegion, hotspot.tenderCity].filter(Boolean).join(' / ') || '未标注' : '载入中';
   const published = hotspot?.publishedAt ? formatDateTime(hotspot.publishedAt) : '未披露';
   const extractedAt = hotspot?.tenderDetailExtractedAt ? formatDateTime(hotspot.tenderDetailExtractedAt) : '未记录';
@@ -876,7 +883,7 @@ function HotspotCard({
 }) {
   const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
   const stage = getNoticeStage(hotspot.tenderNoticeType);
-  const detailReliability = getDetailReliability(hotspot.url);
+  const detailReliability = getDetailReliability(hotspot);
   const rank = getOpportunityRank(hotspot);
   const region = [hotspot.tenderRegion, hotspot.tenderCity].filter(Boolean).join(' / ') || '未标注';
   const published = hotspot.publishedAt ? formatDateTime(hotspot.publishedAt) : '未披露';
@@ -1035,6 +1042,11 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
               <div className="flex items-center justify-between"><span>24h 轮次异常</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{summary.runFailureSummary24h[source.id] || 0}</span></div>
               <div className="flex items-center justify-between"><span>上次成功</span><span className={cn(isLight ? 'text-slate-900' : 'text-slate-200')}>{source.lastSuccessAt ? relativeTime(source.lastSuccessAt) : '暂无'}</span></div>
             </div>
+            {source.probeQueries?.length ? (
+              <p className="mt-3 line-clamp-2 text-[11px] leading-5 text-slate-500">
+                探测词：{source.probeQueries.join(' / ')}
+              </p>
+            ) : null}
             {source.sampleTitle && <p className="mt-4 line-clamp-2 text-xs leading-5 text-slate-500">样例：{source.sampleTitle}</p>}
             {(summary.failureReasons24h[source.id]?.length ?? 0) > 0 && (
               <div className={cn(
