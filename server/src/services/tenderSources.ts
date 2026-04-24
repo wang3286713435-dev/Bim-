@@ -514,7 +514,7 @@ export async function searchGzebpubservice(query: string, limit = 20): Promise<S
           if (isLowValueGzebRecord(title, content)) continue;
           if (!shouldIncludeTender(title, content)) continue;
 
-          const type = classifyTenderType(title);
+          const type = classifyTenderType(title, content);
           if (!type) continue;
           const amount = parseAmountWan(content);
           if (amount !== null && amount < 40) continue;
