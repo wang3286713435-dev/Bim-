@@ -132,6 +132,8 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
     '递交投标文件截止时间',
     '响应文件提交截止时间',
     '提交投标文件截止时间',
+    '递交资格预审/投标文件截止时间',
+    '资格预审/投标文件递交截止时间',
     '电子投标文件递交截止时间',
     '递交电子投标文件截止时间',
     '递交投标文件时间',
@@ -146,6 +148,8 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
   const docDeadline = pickDate(text, [
     '招标文件获取截止时间',
     '采购文件获取截止时间',
+    '获取资格预审/招标文件截止时间',
+    '资格预审/招标文件获取截止时间',
     '文件获取截止时间',
     '报名截止时间',
     '获取文件截止时间',

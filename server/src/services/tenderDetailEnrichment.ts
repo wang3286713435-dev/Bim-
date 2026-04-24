@@ -119,7 +119,7 @@ export function getTenderFieldCompletenessScore(hotspot: Pick<
 function shouldEnrichHotspot(hotspot: HotspotWithKeyword): boolean {
   if (getTenderFieldCompletenessScore(hotspot) < 70) return true;
   if (hotspot.source === 'szygcgpt' || hotspot.source === 'gzebpubservice') {
-    return hotspot.tenderBudgetWan == null || !hotspot.tenderContact || !hotspot.tenderPhone;
+    return hotspot.tenderBudgetWan == null || !hotspot.tenderDeadline || !hotspot.tenderContact || !hotspot.tenderPhone;
   }
   return false;
 }
