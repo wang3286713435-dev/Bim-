@@ -1541,6 +1541,8 @@ function RunsPanel({ runs, themeMode = 'dark' }: { runs: CrawlRun[]; themeMode?:
 function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary | null; health: HealthStatus | null; themeMode: ThemeMode }) {
   const latestRun = summary?.latestRun || null;
   const queueRunning = health?.hotspotCheckQueue.running || false;
+  const activeDetailIds = health?.detailEnrichmentQueue.currentHotspotIds || [];
+  const detailWorkerCount = activeDetailIds.length;
   const isLight = themeMode === 'light';
   const healthTone = health?.status === 'ok'
     ? (isLight ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200')
@@ -1623,7 +1625,15 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>飞书群推送</span><span>{health?.integrations.feishuWebhookEnabled ? '已启用' : '未启用'}</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>多维表同步</span><span>{health?.integrations.feishuBitableEnabled ? '已启用' : '未启用'}</span></div>
-            <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>详情补全队列</span><span>{health?.detailEnrichmentQueue.running ? '补全中' : '空闲'}</span></div>
+            <div className="flex items-center justify-between gap-3">
+              <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>详情补全队列</span>
+              <span>
+                {health?.detailEnrichmentQueue.running
+                  ? `并行 ${detailWorkerCount || 1} 个 · 待处理 ${health.detailEnrichmentQueue.pendingCount}`
+                  : '空闲'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>本轮补全</span><span>{health?.detailEnrichmentQueue.processedCount ?? 0} 条</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>健康心跳</span><span>{health?.timestamp ? relativeTime(health.timestamp) : '暂无'}</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>24h 探测失败</span><span>{totalProbeFailures} 次</span></div>
             <div className="flex items-center justify-between gap-3"><span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>24h 轮次异常</span><span>{totalRunFailures} 轮</span></div>

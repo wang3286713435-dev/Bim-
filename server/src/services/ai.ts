@@ -121,30 +121,13 @@ export function preMatchKeyword(text: string, expandedKeywords: string[]): { mat
 
 function buildAnalysisPrompt(keyword: string, preMatchResult: { matched: boolean; matchedTerms: string[] }): string {
   const matchHint = preMatchResult.matched 
-    ? `\n注意：文本预匹配发现内容中包含以下关键词变体：${preMatchResult.matchedTerms.join('、')}` 
-    : `\n注意：文本预匹配发现内容中未直接提及关键词"${keyword}"的任何变体，请特别严格审核相关性。`;
+    ? `命中词：${preMatchResult.matchedTerms.slice(0, 8).join('、')}` 
+    : `未直接命中关键词：${keyword}`;
 
-  return `你是建筑/BIM企业投标经营助手。判断公告是否是【${keyword}】相关投标机会，并输出投标要点。
-
-${matchHint}
-
-评分规则：
-- isReal=false：新闻、政策、结果公示、坏页面、无投标价值页面。
-- relevance 是投标线索价值分：90+立即跟进；75-89进入商机初筛；60-74人工补字段；40-59观察；低于40过滤。
-- importance：urgent=临近截止或高度匹配；high=值得跟进；medium=待补充核验；low=观察。
-- summary 必须写成“投标要点”，包含能识别出的项目、单位、地区、预算/截止、BIM服务范围、建议动作；缺失字段要说明需人工补齐。
-
-请以 JSON 格式输出：
-{
-  "isReal": true/false,
-  "relevance": 0-100,
-  "relevanceReason": "投标价值打分理由，提到公告阶段、BIM服务内容、字段完整度或风险",
-  "keywordMentioned": true/false,
-  "importance": "low/medium/high/urgent",
-  "summary": "投标要点：..."
-}
-
-只输出 JSON，不要有其他内容。`;
+  return `你是 BIM 投标机会分类器。根据公告判断是否值得跟进。${matchHint}
+只返回 JSON：
+{"isReal":boolean,"relevance":0-100,"relevanceReason":"30字内理由","keywordMentioned":boolean,"importance":"low|medium|high|urgent","summary":"80字内投标要点"}
+规则：结果/候选/合同/终止/坏页 isReal=false；90+立即跟进，75-89商机初筛，60-74补字段，40-59观察；summary 写单位/预算/截止/BIM范围/建议动作，缺失写待补齐。`;
 }
 
 function buildRuleBasedTenderAnalysis(content: string, matchResult: { matched: boolean; matchedTerms: string[] }, reason: string): AIAnalysis {

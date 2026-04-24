@@ -94,7 +94,7 @@ function parseDateCandidate(value: string | null | undefined): Date | undefined 
 
 function pickDate(text: string, labels: string[]): Date | undefined {
   for (const label of labels) {
-    const pattern = new RegExp(`${label}[：:\\s]*([^\\n]{0,100})`);
+    const pattern = new RegExp(`${label}(?:为|是)?[：:\\s]*([^\\n]{0,120})`);
     const match = text.match(pattern);
     const date = parseDateCandidate(match?.[1]);
     if (date) return date;
@@ -132,18 +132,24 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
     '递交投标文件截止时间',
     '响应文件提交截止时间',
     '提交投标文件截止时间',
+    '电子投标文件递交截止时间',
+    '递交电子投标文件截止时间',
+    '递交投标文件时间',
+    '投标文件递交时间',
     '投标截止时间',
+    '递交截止时间',
     '报价截止时间',
     '竞价截止时间',
     '截止时间'
   ]);
-  const bidOpenTime = pickDate(text, ['开标时间', '开启时间']);
+  const bidOpenTime = pickDate(text, ['开标时间', '开标时间为', '投标文件开启时间', '开启时间']);
   const docDeadline = pickDate(text, [
     '招标文件获取截止时间',
     '采购文件获取截止时间',
     '文件获取截止时间',
     '报名截止时间',
-    '获取文件截止时间'
+    '获取文件截止时间',
+    '获取招标文件截止时间'
   ]);
 
   const unit = pick(text, [
@@ -199,13 +205,18 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
         return parseAmountWan(text);
       })()
     ),
-    deadline: result.tender?.deadline || deadline || bidOpenTime,
+    deadline: result.tender?.deadline
+      || deadline
+      || parseDateCandidate(tableFields['投标文件递交截止时间'])
+      || parseDateCandidate(tableFields['递交投标文件截止时间'])
+      || parseDateCandidate(tableFields['电子投标文件递交截止时间'])
+      || bidOpenTime,
     projectCode,
     contact: tableFields['联系人'] || tableFields['项目联系人'] || contact,
     phone: tableFields['联系电话'] || tableFields['联系人电话'] || tableFields['联系方式'] || phone,
     email,
-    bidOpenTime,
-    docDeadline,
+    bidOpenTime: bidOpenTime || parseDateCandidate(tableFields['开标时间']),
+    docDeadline: docDeadline || parseDateCandidate(tableFields['招标文件获取截止时间']) || parseDateCandidate(tableFields['文件获取截止时间']),
     serviceScope: tableFields['采购需求概况'] || section(text, ['招标范围', '采购内容', '服务内容', '项目概况', '建设内容', '工作内容']),
     qualification: section(text, ['投标人资格要求', '供应商资格要求', '资格要求', '资质要求']),
     address,
