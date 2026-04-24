@@ -8,9 +8,10 @@ import {
   getEnabledTenderSources,
   probeTenderSources,
   searchTenderSourceAcrossQueries,
-  buildSearchQueries
+  buildSearchQueries,
+  classifyTenderSourceStatus
 } from '../services/tenderSourceRegistry.js';
-import { getRuntimeConfig } from '../services/runtimeConfig.js';
+import { DEFAULT_TENDER_SOURCE_IDS, getRuntimeConfig } from '../services/runtimeConfig.js';
 import {
   enqueueIncompleteHotspots,
   getDetailEnrichmentQueueState,
@@ -21,6 +22,28 @@ import { isFeishuWebhookEnabled, notifyFeishuWebhook } from '../services/feishu.
 
 const router = Router();
 const TENDER_SOURCES = TENDER_SOURCE_IDS;
+const DEFAULT_SOURCE_SET = new Set<string>(DEFAULT_TENDER_SOURCE_IDS);
+
+const SOURCE_CANDIDATE_POOL = [
+  {
+    category: '省级政府采购网',
+    priority: 'P1',
+    examples: ['广东政府采购智慧云平台', '浙江政府采购网', '江苏政府采购网'],
+    strategy: '优先选公开搜索页和 JSON 接口，先做单源探测，不进入默认扫描'
+  },
+  {
+    category: '行业招标平台',
+    priority: 'P2',
+    examples: ['轨道交通招采平台', '机场集团采购平台', '医院建设招采平台'],
+    strategy: '按业务场景接入，要求关键词命中和详情字段质量同时达标'
+  },
+  {
+    category: '央企/国企招采平台',
+    priority: 'P2',
+    examples: ['中国建筑招采平台', '中国交建供应链平台', '中铁采购平台'],
+    strategy: '通常登录和反爬更强，默认走浏览器 agent / Firecrawl interact 预研'
+  }
+];
 
 function getQueryString(value: unknown): string | undefined {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined;
@@ -54,6 +77,112 @@ function getEffectiveDeadlineTime(item: {
     if (Number.isFinite(time)) return time;
   }
   return null;
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function getTenderDirtyIssues(item: {
+  tenderUnit?: string | null;
+  tenderBudgetWan?: number | null;
+  tenderContact?: string | null;
+  tenderPhone?: string | null;
+  tenderDetailSource?: string | null;
+}): string[] {
+  const issues: string[] = [];
+  const unit = normalizeText(item.tenderUnit);
+  const phone = normalizeText(item.tenderPhone);
+  const detailSource = normalizeText(item.tenderDetailSource);
+
+  if (unit && (unit.length > 80 || /(项目名称|预算金额|采购需求概况|联系人|联系电话|联系地址|招标代理机构)[:：]/.test(unit))) {
+    issues.push('单位字段疑似污染');
+  }
+  if (item.tenderBudgetWan != null && (!Number.isFinite(item.tenderBudgetWan) || item.tenderBudgetWan <= 0 || item.tenderBudgetWan > 1_000_000)) {
+    issues.push('预算金额疑似异常');
+  }
+  if (phone && !/(\d{3,4}-?\d{7,8}|1[3-9]\d{9})/.test(phone)) {
+    issues.push('联系电话疑似异常');
+  }
+  if (/blocked|waf|challenge|404|bad-link|unhealthy/i.test(detailSource)) {
+    issues.push('详情链路可信度低');
+  }
+
+  return issues;
+}
+
+function buildRepairHints(input: {
+  total: number;
+  missingCounts: Record<string, number>;
+  dirtyIssues: Map<string, number>;
+}): string[] {
+  if (input.total === 0) return ['暂无入库样本，先做单源探测和样例确认'];
+
+  const hints: string[] = [];
+  const missingLabels: Record<string, string> = {
+    unit: '招标单位',
+    budget: '预算金额',
+    deadline: '截止/开标时间',
+    contact: '联系人',
+    detail: '详情解析'
+  };
+
+  for (const [key, count] of Object.entries(input.missingCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)) {
+    if (count > 0) {
+      hints.push(`${missingLabels[key] ?? key}缺失 ${count} 条`);
+    }
+  }
+
+  for (const [issue, count] of [...input.dirtyIssues.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)) {
+    hints.push(`${issue} ${count} 条`);
+  }
+
+  return hints.length ? hints : ['字段质量稳定，继续观察新增样本'];
+}
+
+function getSourceDeepCrawlStrategy(sourceId: string): { mode: string; enabled: boolean; note: string } {
+  const map: Record<string, { mode: string; enabled: boolean; note: string }> = {
+    ccgp: {
+      mode: 'detail-api+rules',
+      enabled: true,
+      note: '详情页字段补强已接入，适合作为 v1.4 新源验收样板'
+    },
+    ggzyNational: {
+      mode: 'official-api-list',
+      enabled: false,
+      note: '官方列表接口已修正参数和字段映射；详情字段仍需非空样本继续验证'
+    },
+    cebpubservice: {
+      mode: 'browser-session-required',
+      enabled: false,
+      note: '列表稳定，详情 API 触发 WAF/JS challenge，生产默认降级'
+    }
+  };
+
+  return map[sourceId] || {
+    mode: 'rules+firecrawl-fallback',
+    enabled: true,
+    note: '使用现有规则提取和 Firecrawl 二段补强'
+  };
+}
+
+function getSourceProxyPolicy(sourceId: string, proxyPool: ReturnType<typeof getProxyPoolSnapshot>) {
+  const dedicated = proxyPool.filter(item => item.sources.some(source => source === sourceId));
+  const fallback = proxyPool.filter(item => item.sources.includes('default'));
+  return {
+    dedicatedCount: dedicated.length,
+    fallbackCount: fallback.length,
+    directFallbackEnabled: process.env.TENDER_PROXY_DIRECT_FALLBACK !== 'false',
+    policy: dedicated.length > 0
+      ? 'source-specific'
+      : fallback.length > 0
+        ? 'default-pool'
+        : 'direct-host'
+  };
 }
 
 // 获取所有热点
@@ -416,7 +545,8 @@ router.get('/ops/summary', async (req, res) => {
           tenderAddress: true,
           tenderContact: true,
           tenderPhone: true,
-          tenderDetailSource: true
+          tenderDetailSource: true,
+          createdAt: true
         }
       }),
       prisma.hotspot.findMany({
@@ -484,17 +614,29 @@ router.get('/ops/summary', async (req, res) => {
     const sourceHealth = TENDER_SOURCE_ADAPTERS.map((source) => {
       const latestProbe = latestProbeBySource.get(source.id);
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
+      const enabled = enabledSourceIds.has(source.id);
+      const ok = enabled ? latestProbe?.ok ?? Boolean(runtime.lastSuccessAt && !runtime.circuitOpen) : false;
+      const count = enabled ? latestProbe?.resultCount ?? 0 : 0;
+      const error = enabled ? latestProbe?.ok ? undefined : latestProbe?.errorMessage ?? runtime.lastError : 'source disabled';
+      const sourceStatus = classifyTenderSourceStatus({
+        enabled,
+        ok,
+        count,
+        error,
+        circuitOpen: runtime.circuitOpen
+      });
       return {
         id: source.id,
         name: source.name,
-        enabled: enabledSourceIds.has(source.id),
-        ok: latestProbe?.ok ?? Boolean(runtime.lastSuccessAt && !runtime.circuitOpen),
-        count: latestProbe?.resultCount ?? 0,
-        elapsedMs: latestProbe?.elapsedMs ?? 0,
+        enabled,
+        ok,
+        ...sourceStatus,
+        count,
+        elapsedMs: enabled ? latestProbe?.elapsedMs ?? 0 : 0,
         probeQueries: undefined,
-        sampleTitle: latestProbe?.sampleTitle ?? undefined,
-        sampleUrl: latestProbe?.sampleUrl ?? undefined,
-        error: latestProbe?.ok ? undefined : latestProbe?.errorMessage ?? runtime.lastError,
+        sampleTitle: enabled ? latestProbe?.sampleTitle ?? undefined : undefined,
+        sampleUrl: enabled ? latestProbe?.sampleUrl ?? undefined : undefined,
+        error,
         failureCount: runtime.failureCount,
         circuitOpen: runtime.circuitOpen,
         cooldownRemainingMs: runtime.cooldownRemainingMs,
@@ -509,7 +651,7 @@ router.get('/ops/summary', async (req, res) => {
         if ((resultCount ?? 0) === 0) return '空结果 / 疑似被拦截';
         return '未知失败';
       }
-      if (/403|forbidden|waf/i.test(text)) return '403 / WAF 拦截';
+      if (/403|405|forbidden|waf|blocked|challenge|验证码|安全验证|被阻断/i.test(text)) return 'WAF / 安全挑战';
       if (/502|bad gateway/i.test(text)) return '502 网关错误';
       if (/429|too many requests|rate limit/i.test(text)) return '429 限流';
       if (/timeout|timed out|ETIMEDOUT/i.test(text)) return '请求超时';
@@ -577,7 +719,13 @@ router.get('/ops/summary', async (req, res) => {
       deadlineCount: number;
       contactCount: number;
       detailCount: number;
+      activeCount: number;
+      expiredCount: number;
+      highCompletenessCount: number;
       completenessTotal: number;
+      missingCounts: Record<string, number>;
+      dirtyIssueCount: number;
+      dirtyIssues: Map<string, number>;
     }>();
 
     for (const row of hotspotQualityRows) {
@@ -591,7 +739,19 @@ router.get('/ops/summary', async (req, res) => {
         deadlineCount: 0,
         contactCount: 0,
         detailCount: 0,
-        completenessTotal: 0
+        activeCount: 0,
+        expiredCount: 0,
+        highCompletenessCount: 0,
+        completenessTotal: 0,
+        missingCounts: {
+          unit: 0,
+          budget: 0,
+          deadline: 0,
+          contact: 0,
+          detail: 0
+        },
+        dirtyIssueCount: 0,
+        dirtyIssues: new Map<string, number>()
       };
 
       item.total += 1;
@@ -601,18 +761,26 @@ router.get('/ops/summary', async (req, res) => {
       if (row.tenderUnit) {
         quality.unitCount += 1;
         item.unitCount += 1;
+      } else {
+        item.missingCounts.unit += 1;
       }
       if (row.tenderBudgetWan != null) {
         quality.budgetCount += 1;
         item.budgetCount += 1;
+      } else {
+        item.missingCounts.budget += 1;
       }
       if (deadline != null) {
         quality.deadlineCount += 1;
         item.deadlineCount += 1;
+      } else {
+        item.missingCounts.deadline += 1;
       }
       if (row.tenderContact) {
         quality.contactCount += 1;
         item.contactCount += 1;
+      } else {
+        item.missingCounts.contact += 1;
       }
       if (row.tenderPhone) {
         quality.phoneCount += 1;
@@ -620,17 +788,55 @@ router.get('/ops/summary', async (req, res) => {
       if (row.tenderDetailSource) {
         quality.detailCount += 1;
         item.detailCount += 1;
+      } else {
+        item.missingCounts.detail += 1;
       }
       if (deadline == null || deadline >= Date.now()) {
         quality.activeCount += 1;
+        item.activeCount += 1;
       } else {
         quality.expiredCount += 1;
+        item.expiredCount += 1;
       }
       if (completeness >= 60) {
         quality.highCompletenessCount += 1;
+        item.highCompletenessCount += 1;
+      }
+
+      const dirtyIssues = getTenderDirtyIssues(row);
+      item.dirtyIssueCount += dirtyIssues.length;
+      for (const issue of dirtyIssues) {
+        item.dirtyIssues.set(issue, (item.dirtyIssues.get(issue) || 0) + 1);
       }
 
       sourceQualityMap.set(row.source, item);
+    }
+
+    for (const source of TENDER_SOURCE_ADAPTERS) {
+      if (!sourceQualityMap.has(source.id)) {
+        sourceQualityMap.set(source.id, {
+          source: source.id,
+          total: 0,
+          unitCount: 0,
+          budgetCount: 0,
+          deadlineCount: 0,
+          contactCount: 0,
+          detailCount: 0,
+          activeCount: 0,
+          expiredCount: 0,
+          highCompletenessCount: 0,
+          completenessTotal: 0,
+          missingCounts: {
+            unit: 0,
+            budget: 0,
+            deadline: 0,
+            contact: 0,
+            detail: 0
+          },
+          dirtyIssueCount: 0,
+          dirtyIssues: new Map<string, number>()
+        });
+      }
     }
 
     const sourceQuality = [...sourceQualityMap.values()]
@@ -642,9 +848,125 @@ router.get('/ops/summary', async (req, res) => {
         deadlineCoverage: item.total ? Math.round((item.deadlineCount / item.total) * 100) : 0,
         contactCoverage: item.total ? Math.round((item.contactCount / item.total) * 100) : 0,
         detailCoverage: item.total ? Math.round((item.detailCount / item.total) * 100) : 0,
-        avgCompleteness: item.total ? Math.round(item.completenessTotal / item.total) : 0
+        activeCount: item.activeCount,
+        expiredCount: item.expiredCount,
+        highCompletenessCount: item.highCompletenessCount,
+        avgCompleteness: item.total ? Math.round(item.completenessTotal / item.total) : 0,
+        missingCounts: item.missingCounts,
+        dirtyIssueCount: item.dirtyIssueCount,
+        dirtyIssues: [...item.dirtyIssues.entries()]
+          .map(([issue, count]) => ({ issue, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5),
+        repairHints: buildRepairHints(item),
+        qualityScore: Math.max(0, Math.min(100, Math.round(
+          (item.total ? item.completenessTotal / item.total : 0)
+          - (item.total ? (item.dirtyIssueCount / item.total) * 12 : 0)
+        )))
       }))
-      .sort((a, b) => b.avgCompleteness - a.avgCompleteness);
+      .map((item) => ({
+        ...item,
+        qualityGrade: item.total === 0
+          ? 'no_sample'
+          : item.qualityScore >= 70
+            ? 'good'
+            : item.qualityScore >= 45
+              ? 'needs_enrichment'
+              : 'poor'
+      }))
+      .sort((a, b) => b.qualityScore - a.qualityScore);
+
+    const sourceQualityById = new Map(sourceQuality.map((item) => [item.source, item]));
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+    function averageQualityForRows(rows: typeof hotspotQualityRows): number {
+      if (rows.length === 0) return 0;
+      const total = rows.reduce((sum, row) => {
+        const completeness = getTenderFieldCompletenessScore(row);
+        const dirtyPenalty = getTenderDirtyIssues(row).length * 12;
+        return sum + Math.max(0, Math.min(100, completeness - dirtyPenalty));
+      }, 0);
+      return Math.round(total / rows.length);
+    }
+
+    const sourceQualityTrend = TENDER_SOURCE_ADAPTERS.map((source) => {
+      const sourceRows = hotspotQualityRows.filter((row) => row.source === source.id);
+      const rows7d = sourceRows.filter((row) => new Date(row.createdAt).getTime() >= sevenDaysAgo);
+      const rows30d = sourceRows.filter((row) => new Date(row.createdAt).getTime() >= thirtyDaysAgo);
+      const score7d = averageQualityForRows(rows7d);
+      const score30d = averageQualityForRows(rows30d);
+      const delta = score7d - score30d;
+      return {
+        source: source.id,
+        score7d,
+        score30d,
+        delta,
+        sample7d: rows7d.length,
+        sample30d: rows30d.length,
+        direction: delta > 3 ? 'up' : delta < -3 ? 'down' : 'flat'
+      };
+    });
+
+    const proxySnapshot = getProxyPoolSnapshot();
+    const sourceAcceptance = TENDER_SOURCE_ADAPTERS.map((source) => {
+      const qualityItem = sourceQualityById.get(source.id);
+      const healthItem = sourceHealth.find((item) => item.id === source.id);
+      const latestProbe = latestProbeBySource.get(source.id);
+      const proxyPolicy = getSourceProxyPolicy(source.id, proxySnapshot);
+      const deepCrawlStrategy = getSourceDeepCrawlStrategy(source.id);
+      const checks = [
+        {
+          key: 'isolated_probe',
+          label: '单源隔离',
+          ok: true,
+          detail: DEFAULT_SOURCE_SET.has(source.id) ? '默认生产源' : '新源默认不加入生产扫描，可单源探测'
+        },
+        {
+          key: 'non_empty_sample',
+          label: '非空样本',
+          ok: Boolean((qualityItem?.total ?? 0) > 0 || (latestProbe?.resultCount ?? 0) > 0),
+          detail: `入库样本 ${qualityItem?.total ?? 0} 条，最近探测 ${latestProbe?.resultCount ?? 0} 条`
+        },
+        {
+          key: 'field_quality',
+          label: '字段质量',
+          ok: (qualityItem?.qualityScore ?? 0) >= 40,
+          detail: `质量分 ${qualityItem?.qualityScore ?? 0}，平均完整度 ${qualityItem?.avgCompleteness ?? 0}`
+        },
+        {
+          key: 'detail_reliability',
+          label: '详情可靠',
+          ok: (qualityItem?.detailCoverage ?? 0) >= 30 || deepCrawlStrategy.enabled,
+          detail: `详情覆盖 ${qualityItem?.detailCoverage ?? 0}%；${deepCrawlStrategy.note}`
+        },
+        {
+          key: 'failure_classified',
+          label: '失败可解释',
+          ok: !healthItem || !['request_failed'].includes(healthItem.status || ''),
+          detail: healthItem?.statusReason || healthItem?.statusLabel || '暂无未知失败'
+        }
+      ];
+      const passedCount = checks.filter((item) => item.ok).length;
+      const eligibleForProduction = checks.every((item) => item.ok);
+      return {
+        source: source.id,
+        name: source.name,
+        defaultSource: DEFAULT_SOURCE_SET.has(source.id),
+        enabled: runtimeConfig.tenderSources.includes(source.id),
+        eligibleForProduction,
+        passedCount,
+        totalChecks: checks.length,
+        acceptanceScore: Math.round((passedCount / checks.length) * 100),
+        checks,
+        proxyPolicy,
+        deepCrawlStrategy,
+        nextAction: eligibleForProduction
+          ? '可考虑加入生产扫描或提高扫描配额'
+          : checks.find((item) => !item.ok)?.detail || '继续观察'
+      };
+    });
 
     const qualitySummary = {
       ...quality,
@@ -789,9 +1111,12 @@ router.get('/ops/summary', async (req, res) => {
       quality: qualitySummary,
       ai: aiLogSummary,
       sourceQuality,
+      sourceQualityTrend,
+      sourceAcceptance,
+      sourceCandidatePool: SOURCE_CANDIDATE_POOL,
       runtimeConfig,
       sourceHealth,
-      proxyPool: getProxyPoolSnapshot(),
+      proxyPool: proxySnapshot,
       recentRuns,
       latestRun,
       failureSummary24h: probeFailureSummary24h,

@@ -11,6 +11,7 @@ import {
 import { getRuntimeConfig } from './runtimeConfig.js';
 
 export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational' | 'cebpubservice';
+export type TenderSourceStatus = 'disabled' | 'healthy' | 'empty' | 'request_failed' | 'waf_blocked' | 'circuit_open' | 'degraded';
 
 export interface TenderSourceAdapter {
   id: TenderSourceId;
@@ -28,6 +29,9 @@ export interface TenderSourceProbe {
   name: string;
   enabled: boolean;
   ok: boolean;
+  status: TenderSourceStatus;
+  statusLabel: string;
+  statusReason?: string;
   count: number;
   elapsedMs: number;
   probeQueries?: string[];
@@ -219,6 +223,37 @@ export async function buildSearchQueries(keyword: string, expandedKeywords: stri
   return [...new Set(candidates.map(query => query.trim()).filter(Boolean))].slice(0, Math.max(1, maxVariants));
 }
 
+export function classifyTenderSourceStatus(input: {
+  enabled: boolean;
+  ok: boolean;
+  count?: number;
+  error?: string | null;
+  circuitOpen?: boolean;
+}): { status: TenderSourceStatus; statusLabel: string; statusReason?: string } {
+  const error = (input.error || '').trim();
+  const lower = error.toLowerCase();
+
+  if (!input.enabled) {
+    return { status: 'disabled', statusLabel: '未启用', statusReason: '该来源未加入当前生产扫描' };
+  }
+  if (input.circuitOpen) {
+    return { status: 'circuit_open', statusLabel: '熔断中', statusReason: error || '连续失败后进入冷却' };
+  }
+  if (input.ok) {
+    if (error && /blocked|waf|challenge|403|405|验证码|安全验证|被阻断/i.test(error)) {
+      return { status: 'degraded', statusLabel: '降级可用', statusReason: error };
+    }
+    return { status: 'healthy', statusLabel: '正常', statusReason: input.count === 0 ? '最近探测成功但暂无样例' : undefined };
+  }
+  if (!error || /empty|空结果|probe empty|returned empty/i.test(error)) {
+    return { status: 'empty', statusLabel: '空结果', statusReason: error || '请求可达，但当前关键词未返回可用结果' };
+  }
+  if (/blocked|waf|challenge|403|405|forbidden|验证码|安全验证|被阻断/i.test(lower)) {
+    return { status: 'waf_blocked', statusLabel: 'WAF 拦截', statusReason: error };
+  }
+  return { status: 'request_failed', statusLabel: '请求失败', statusReason: error };
+}
+
 function buildProbeQueries(sourceId: TenderSourceId, query: string): string[] {
   const normalized = query.trim() || 'BIM';
   const variants = new Set<string>([normalized]);
@@ -306,7 +341,8 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         count: 0,
         elapsedMs: 0,
         probeQueries,
-        error: 'source disabled'
+        error: 'source disabled',
+        ...classifyTenderSourceStatus({ enabled, ok: false, count: 0, error: 'source disabled' })
       };
     }
 
@@ -336,6 +372,13 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         markSourceFailure(source.id, lastError);
       }
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
+      const sourceStatus = classifyTenderSourceStatus({
+        enabled,
+        ok: uniqueRows.length > 0,
+        count: uniqueRows.length,
+        error: uniqueRows.length > 0 ? undefined : lastError,
+        circuitOpen: runtime.circuitOpen
+      });
       return {
         id: source.id,
         name: source.name,
@@ -351,11 +394,19 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         circuitOpen: runtime.circuitOpen,
         cooldownRemainingMs: runtime.cooldownRemainingMs,
         lastSuccessAt: runtime.lastSuccessAt,
-        lastFailureAt: runtime.lastFailureAt
+        lastFailureAt: runtime.lastFailureAt,
+        ...sourceStatus
       };
     } catch (error) {
       markSourceFailure(source.id, error instanceof Error ? error.message : String(error));
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
+      const sourceStatus = classifyTenderSourceStatus({
+        enabled,
+        ok: false,
+        count: 0,
+        error: error instanceof Error ? error.message : String(error),
+        circuitOpen: runtime.circuitOpen
+      });
       return {
         id: source.id,
         name: source.name,
@@ -369,7 +420,8 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
         circuitOpen: runtime.circuitOpen,
         cooldownRemainingMs: runtime.cooldownRemainingMs,
         lastSuccessAt: runtime.lastSuccessAt,
-        lastFailureAt: runtime.lastFailureAt
+        lastFailureAt: runtime.lastFailureAt,
+        ...sourceStatus
       };
     }
   }));

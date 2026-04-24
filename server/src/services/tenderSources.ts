@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { AxiosError } from 'axios';
 import { load } from 'cheerio';
+import CryptoJS from 'crypto-js';
 import type { SearchResult, TenderMetadata } from '../types.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 import { axiosWithSourceProxy, axiosWithSourceProxyDetailed, markProxySoftFailure } from './proxyPool.js';
@@ -35,6 +36,15 @@ const SHENZHEN_SITE_NAMES = ['深圳', '福田', '罗湖', '南山', '宝安', '
 const DETAIL_URL_HEALTH_TTL_MS = 6 * 60 * 60 * 1000;
 const detailUrlHealthCache = new Map<string, { healthy: boolean; checkedAt: number }>();
 const ccgpDetailCache = new Map<string, { content: string; tender: TenderMetadata; fetchedAt: number }>();
+const cebDetailCache = new Map<string, CebDetailProbe>();
+
+type CebDetailProbe = {
+  status: 'disabled' | 'ok' | 'blocked' | 'empty' | 'error';
+  content?: string;
+  tender?: TenderMetadata;
+  message?: string;
+  fetchedAt: number;
+};
 
 function stripHtml(value: string | null | undefined): string {
   if (!value) return '';
@@ -165,6 +175,55 @@ function parseBudgetWanLoose(text: string): number | undefined {
 function parseUnit(value: string | null | undefined): string {
   const match = normalizeWhitespace(value).match(/(?:招标单位|建设单位|采购人|招标人)[：:]?\s*([^\n]{2,60})/);
   return match?.[1]?.trim() ?? '';
+}
+
+function isEnabledFlag(value: string | null | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function isCebDetailFetchEnabled(): boolean {
+  return isEnabledFlag(process.env.CEB_DETAIL_FETCH_ENABLED);
+}
+
+function isCebWafChallenge(text: string): boolean {
+  return /_waf_|antidom|potential threats|security|405|云盾|安全验证|访问被阻断|blocked/i.test(text);
+}
+
+function decryptCebPayload(payload: string): string | null {
+  const raw = payload.trim().replace(/^"|"$/g, '');
+  if (!raw || raw.startsWith('{') || raw.startsWith('[') || raw.startsWith('<')) return null;
+
+  try {
+    const key = CryptoJS.enc.Utf8.parse('1qaz@wsx3e');
+    const decrypted = CryptoJS.DES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(raw) } as CryptoJS.lib.CipherParams,
+      key,
+      { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }
+    );
+    const text = decrypted.toString(CryptoJS.enc.Utf8);
+    return text.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCebDetailJson(raw: string): Record<string, unknown> | null {
+  const candidates = [raw, decryptCebPayload(raw)].filter((item): item is string => Boolean(item));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+    } catch {
+      // Continue with the next candidate. CEB may return encrypted JSON or an HTML WAF page.
+    }
+  }
+  return null;
+}
+
+function flattenCebDetailPayload(payload: Record<string, unknown>): string {
+  const data = payload.data ?? payload.result ?? payload;
+  if (typeof data === 'string') return stripHtml(data);
+  return stripHtml(JSON.stringify(data));
 }
 
 function shouldIncludeTender(title: string, content: string): boolean {
@@ -306,6 +365,8 @@ function classifyTenderType(title: string, datasetName = ''): string | null {
   const text = `${title} ${datasetName}`.toUpperCase();
   if (text.includes('结果') || text.includes('中标') || text.includes('成交')) return null;
   if (text.includes('全过程') || (text.includes('EPC') && text.includes('BIM'))) return '全过程BIM';
+  if (text.includes('工程总承包') || text.includes('EPC') || text.includes('总承包工程')) return '工程总承包/EPC';
+  if (text.includes('装配式建筑')) return '装配式建筑';
   if (text.includes('设计') && (text.includes('BIM') || text.includes('正向'))) return '设计BIM';
   if (text.includes('施工') && text.includes('BIM')) return '施工BIM';
   if (text.includes('智慧') || text.includes('CIM') || text.includes('数字孪生')) return '智慧CIM';
@@ -452,6 +513,119 @@ async function fetchCcgpDetail(url: string, base: SearchResult): Promise<{ conte
   }
 }
 
+async function fetchCebDetailViaApi(uuid: string, base: SearchResult): Promise<CebDetailProbe> {
+  const cached = cebDetailCache.get(uuid);
+  if (cached && Date.now() - cached.fetchedAt < DETAIL_URL_HEALTH_TTL_MS) return cached;
+
+  if (!isCebDetailFetchEnabled()) {
+    const disabled: CebDetailProbe = {
+      status: 'disabled',
+      message: 'CEB 详情接口默认关闭，避免触发阿里云 405/WAF 挑战影响定时扫描',
+      fetchedAt: Date.now()
+    };
+    cebDetailCache.set(uuid, disabled);
+    return disabled;
+  }
+
+  try {
+    const detailUrl = `https://ctbpsp.com/cutominfoapi/bulletin/${encodeURIComponent(uuid)}/uid/0`;
+    const { response, proxyId } = await axiosWithSourceProxyDetailed<string>('cebpubservice', {
+      method: 'get',
+      url: detailUrl,
+      timeout: 25000,
+      responseType: 'text',
+      validateStatus: () => true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+        Accept: 'application/json,text/plain,*/*',
+        Referer: `https://ctbpsp.com/#/bulletinDetail?uuid=${encodeURIComponent(uuid)}&inpvalue=&dataSource=0&tenderAgency=`
+      }
+    });
+
+    const raw = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    if (response.status >= 400 || isCebWafChallenge(raw) || /^\s*</.test(raw)) {
+      markProxySoftFailure(proxyId, `ceb detail blocked: http ${response.status}`);
+      const blocked: CebDetailProbe = {
+        status: 'blocked',
+        message: `详情接口触发 WAF/JS challenge（HTTP ${response.status}），已降级使用列表字段`,
+        fetchedAt: Date.now()
+      };
+      cebDetailCache.set(uuid, blocked);
+      return blocked;
+    }
+
+    const parsed = parseCebDetailJson(raw);
+    if (!parsed) {
+      const empty: CebDetailProbe = {
+        status: 'empty',
+        message: '详情接口返回非结构化内容，已降级使用列表字段',
+        fetchedAt: Date.now()
+      };
+      cebDetailCache.set(uuid, empty);
+      return empty;
+    }
+
+    const detailText = flattenCebDetailPayload(parsed);
+    if (!detailText || detailText === '{}' || detailText === 'null') {
+      const empty: CebDetailProbe = {
+        status: 'empty',
+        message: '详情接口返回空详情，已降级使用列表字段',
+        fetchedAt: Date.now()
+      };
+      cebDetailCache.set(uuid, empty);
+      return empty;
+    }
+
+    const extracted = extractTenderDetailFields({
+      ...base,
+      content: buildTenderContent([
+        base.content,
+        '--- CEB 官方详情 ---',
+        detailText
+      ])
+    });
+
+    const mergedTender: TenderMetadata = {
+      ...base.tender,
+      ...extracted,
+      unit: extracted.unit || parseUnit(detailText) || base.tender?.unit,
+      budgetWan: extracted.budgetWan ?? parseBudgetWanLoose(detailText) ?? base.tender?.budgetWan,
+      deadline: extracted.deadline ?? pickTenderDate(detailText, ['投标文件递交截止时间', '投标截止时间', '递交截止时间', '截止时间']) ?? base.tender?.deadline,
+      bidOpenTime: extracted.bidOpenTime ?? pickTenderDate(detailText, ['开标时间', '开启时间']) ?? base.tender?.bidOpenTime,
+      platform: '中国招标投标公共服务平台',
+      detailSource: 'ceb-detail-api+des',
+      detailExtractedAt: new Date()
+    };
+
+    const content = buildTenderContent([
+      base.content,
+      mergedTender.unit ? `招标人/采购人：${mergedTender.unit}` : null,
+      mergedTender.budgetWan ? `预算金额：${mergedTender.budgetWan} 万元` : null,
+      mergedTender.deadline ? `截止时间：${mergedTender.deadline.toISOString().replace('T', ' ').slice(0, 16)}` : null,
+      mergedTender.contact ? `联系人：${mergedTender.contact}` : null,
+      mergedTender.phone ? `联系电话：${mergedTender.phone}` : null,
+      detailText
+    ]);
+
+    const ok: CebDetailProbe = {
+      status: 'ok',
+      content,
+      tender: mergedTender,
+      fetchedAt: Date.now()
+    };
+    cebDetailCache.set(uuid, ok);
+    return ok;
+  } catch (error) {
+    const failed: CebDetailProbe = {
+      status: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      fetchedAt: Date.now()
+    };
+    cebDetailCache.set(uuid, failed);
+    return failed;
+  }
+}
+
 export async function searchCebpubservice(query: string, limit = 20): Promise<SearchResult[]> {
   await cebLimiter.wait();
 
@@ -537,13 +711,48 @@ export async function searchCebpubservice(query: string, limit = 20): Promise<Se
           region ? `地区：${region}` : null,
           channel ? `来源渠道：${channel}` : null,
           bidOpenTime ? `开标时间：${bidOpenTime.toISOString().replace('T', ' ').slice(0, 16)}` : null,
+          '详情策略：列表字段稳定解析；SPA 详情接口需通过浏览器/WAF challenge 后再补强',
           rowText || null
         ])
       }));
     });
 
     console.log(`CEB PubService search for "${query}": found ${results.length} filtered results`);
-    return results.slice(0, limit);
+    const sliced = results.slice(0, limit);
+    if (!isCebDetailFetchEnabled()) return sliced;
+
+    const enriched: SearchResult[] = [];
+    for (const result of sliced) {
+      const uuid = result.sourceId;
+      if (!uuid) {
+        enriched.push(result);
+        continue;
+      }
+
+      const detail = await fetchCebDetailViaApi(uuid, result);
+      if (detail.status === 'ok' && detail.content && detail.tender) {
+        enriched.push({
+          ...result,
+          content: detail.content,
+          tender: detail.tender
+        });
+      } else {
+        enriched.push({
+          ...result,
+          content: [
+            result.content,
+            detail.message ? `详情补强：${detail.message}` : `详情补强：${detail.status}`
+          ].filter(Boolean).join('\n'),
+          tender: {
+            ...result.tender,
+            detailSource: `ceb-list+rules:${detail.status}`,
+            detailExtractedAt: new Date()
+          }
+        });
+      }
+    }
+
+    return enriched;
   } catch (error) {
     console.error('CEB PubService search error:', error instanceof Error ? error.message : error);
     return [];
@@ -673,14 +882,6 @@ export async function searchGgzyNational(query: string, limit = 20): Promise<Sea
     const params = new URLSearchParams({
       SOURCE_TYPE: '1',
       DEAL_TIME: '02',
-      DEAL_CLASSIFY: '00',
-      DEAL_STAGE: '0000',
-      DEAL_PROVINCE: '0',
-      DEAL_CITY: '0',
-      DEAL_PLATFORM: '0',
-      BID_PLATFORM: '0',
-      DEAL_TRADE: '0',
-      isShowAll: '1',
       PAGENUMBER: '1',
       FINDTXT: query
     });
@@ -713,7 +914,11 @@ export async function searchGgzyNational(query: string, limit = 20): Promise<Sea
 
     const results = records.flatMap(record => {
       const title = firstStringField(record, ['title', 'TITLE', 'DEAL_TITLE', 'dealTitle', 'PROJECT_NAME', 'projectName']);
-      const rawContent = firstStringField(record, ['content', 'CONTENT', 'DEAL_CONTENT', 'description', 'summary']);
+      const rawContent = buildTenderContent([
+        firstStringField(record, ['bodyContent', 'content', 'CONTENT', 'DEAL_CONTENT', 'description', 'summary']),
+        firstStringField(record, ['informationTypeText', 'businessTypeText', 'industryTypeText']),
+        firstStringField(record, ['transactionSourcesPlatformText'])
+      ]);
       const rawUrl = firstStringField(record, ['url', 'URL', 'detailUrl', 'DETAIL_URL', 'linkurl', 'LINKURL']);
       const url = resolveUrl(rawUrl, 'https://www.ggzy.gov.cn/');
       if (!title || !url) return [];
@@ -726,20 +931,36 @@ export async function searchGgzyNational(query: string, limit = 20): Promise<Sea
       if (amount !== null && amount < 40) return [];
 
       const sourceId = firstStringField(record, ['id', 'ID', 'uuid', 'UUID']) || url.match(/([^/?#]+)(?:[?#].*)?$/)?.[1];
+      const region = firstStringField(record, ['provinceText', 'region', 'REGION', 'DEAL_PROVINCE_NAME']);
+      const city = firstStringField(record, ['cityText', 'city', 'CITY']);
+      const noticeType = firstStringField(record, ['informationTypeText', 'noticeType', 'NOTICE_TYPE']);
+      const projectCode = firstStringField(record, ['tenderProjectCode', 'projectCode', 'PROJECT_CODE']);
+      const publishedAt = parseCcgpDate(firstStringField(record, ['publishTime', 'time', 'TIME', 'date', 'PUBLISH_TIME']));
       return toTenderResult({
         title,
         url,
         source: 'ggzyNational',
         sourceId,
-        publishedAt: parseCcgpDate(firstStringField(record, ['time', 'TIME', 'date', 'publishTime', 'PUBLISH_TIME'])),
+        publishedAt,
         tender: {
           type,
+          region: region || undefined,
+          city: city || undefined,
           budgetWan: amount ?? undefined,
-          platform: '全国公共资源交易平台'
+          noticeType: noticeType || undefined,
+          platform: '全国公共资源交易平台',
+          projectCode: projectCode || undefined,
+          detailSource: 'ggzy-national-list+official-api',
+          detailExtractedAt: new Date()
         },
         content: buildTenderContent([
           '平台：全国公共资源交易平台',
           `分类：${type}`,
+          noticeType ? `公告阶段：${noticeType}` : null,
+          region ? `地区：${region}` : null,
+          city ? `城市：${city}` : null,
+          projectCode ? `项目编号：${projectCode}` : null,
+          publishedAt ? `发布时间：${publishedAt.toISOString().slice(0, 10)}` : null,
           amount !== null ? `预算：${amount} 万元` : null,
           rawContent || null
         ])

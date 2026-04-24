@@ -81,6 +81,9 @@ export interface SourceHealthProbe {
   name: string;
   enabled: boolean;
   ok: boolean;
+  status?: 'disabled' | 'healthy' | 'empty' | 'request_failed' | 'waf_blocked' | 'circuit_open' | 'degraded';
+  statusLabel?: string;
+  statusReason?: string;
   count: number;
   elapsedMs: number;
   probeQueries?: string[];
@@ -221,7 +224,54 @@ export interface OpsSummary {
     deadlineCoverage: number;
     contactCoverage: number;
     detailCoverage: number;
+    activeCount: number;
+    expiredCount: number;
+    highCompletenessCount: number;
     avgCompleteness: number;
+    missingCounts: Record<string, number>;
+    dirtyIssueCount: number;
+    dirtyIssues: Array<{ issue: string; count: number }>;
+    repairHints: string[];
+    qualityScore: number;
+    qualityGrade: 'no_sample' | 'good' | 'needs_enrichment' | 'poor';
+  }>;
+  sourceQualityTrend: Array<{
+    source: string;
+    score7d: number;
+    score30d: number;
+    delta: number;
+    sample7d: number;
+    sample30d: number;
+    direction: 'up' | 'down' | 'flat';
+  }>;
+  sourceAcceptance: Array<{
+    source: string;
+    name: string;
+    defaultSource: boolean;
+    enabled: boolean;
+    eligibleForProduction: boolean;
+    passedCount: number;
+    totalChecks: number;
+    acceptanceScore: number;
+    checks: Array<{ key: string; label: string; ok: boolean; detail: string }>;
+    proxyPolicy: {
+      dedicatedCount: number;
+      fallbackCount: number;
+      directFallbackEnabled: boolean;
+      policy: 'source-specific' | 'default-pool' | 'direct-host';
+    };
+    deepCrawlStrategy: {
+      mode: string;
+      enabled: boolean;
+      note: string;
+    };
+    nextAction: string;
+  }>;
+  sourceCandidatePool: Array<{
+    category: string;
+    priority: string;
+    examples: string[];
+    strategy: string;
   }>;
   runtimeConfig: RuntimeConfig;
   sourceHealth: SourceHealthProbe[];

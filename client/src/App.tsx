@@ -236,6 +236,23 @@ function getHealthTone(ok: boolean, circuitOpen?: boolean): string {
   return 'text-amber-200 bg-amber-500/10 border-amber-400/20';
 }
 
+function getSourceStatusTone(status: string | undefined, ok: boolean, circuitOpen?: boolean): string {
+  if (status === 'disabled') return 'text-slate-300 bg-slate-500/10 border-slate-400/20';
+  if (status === 'healthy') return 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20';
+  if (status === 'degraded') return 'text-cyan-200 bg-cyan-500/10 border-cyan-400/20';
+  if (status === 'empty') return 'text-amber-200 bg-amber-500/10 border-amber-400/20';
+  if (status === 'waf_blocked' || status === 'circuit_open') return 'text-red-300 bg-red-500/10 border-red-400/20';
+  if (status === 'request_failed') return 'text-orange-200 bg-orange-500/10 border-orange-400/20';
+  return getHealthTone(ok, circuitOpen);
+}
+
+function getSourceQualityMeta(grade: string | undefined, score: number): { label: string; tone: string } {
+  if (grade === 'no_sample') return { label: '暂无样本', tone: 'text-slate-300 bg-slate-500/10 border-slate-400/20' };
+  if (grade === 'good' || score >= 70) return { label: '质量较高', tone: 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20' };
+  if (grade === 'needs_enrichment' || score >= 45) return { label: '待补强', tone: 'text-amber-200 bg-amber-500/10 border-amber-400/20' };
+  return { label: '质量偏低', tone: 'text-red-200 bg-red-500/10 border-red-400/20' };
+}
+
 function toPercent(value: number, max: number): number {
   if (max <= 0) return 0;
   return Math.max(8, Math.round((value / max) * 100));
@@ -1087,10 +1104,10 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源健康</h3>
-          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>读取最近探测与运行日志，不因打开看板额外触发高风险来源请求。</p>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>区分未启用、空结果、请求失败、WAF 拦截和熔断冷却，避免把所有异常都混成待观察。</p>
         </div>
         <div className={cn('rounded-2xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
-          {summary.runtimeConfig.tenderSources.length} / 4 已启用
+          {summary.runtimeConfig.tenderSources.length} / {summary.sourceHealth.length} 已启用
         </div>
       </div>
 
@@ -1102,8 +1119,8 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
                 <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{getSourceLabel(source.id)}</p>
                 <p className="mt-1 text-xs text-slate-500">{source.elapsedMs} ms</p>
               </div>
-              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(getHealthTone(source.ok, source.circuitOpen), themeMode))}>
-                {source.circuitOpen ? '熔断中' : source.ok ? '正常' : '待观察'}
+              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(getSourceStatusTone(source.status, source.ok, source.circuitOpen), themeMode))}>
+                {source.statusLabel || (source.circuitOpen ? '熔断中' : source.ok ? '正常' : '待观察')}
               </span>
             </div>
             <div className={cn('mt-4 space-y-2 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>
@@ -1118,6 +1135,11 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
               </p>
             ) : null}
             {source.sampleTitle && <p className="mt-4 line-clamp-2 text-xs leading-5 text-slate-500">样例：{source.sampleTitle}</p>}
+            {source.statusReason && (
+              <p className={cn('mt-3 line-clamp-2 rounded-2xl border px-3 py-2 text-xs leading-5', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400')}>
+                状态说明：{source.statusReason}
+              </p>
+            )}
             {(summary.failureReasons24h[source.id]?.length ?? 0) > 0 && (
               <div className={cn(
                 'mt-3 rounded-2xl border px-3 py-3 text-xs',
@@ -1293,6 +1315,7 @@ function AIQualityCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | 
 function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
   const isLight = themeMode === 'light';
   if (!summary) return null;
+  const trendBySource = new Map((summary.sourceQualityTrend || []).map((item) => [item.source, item]));
 
   return (
     <section className={cn(
@@ -1304,15 +1327,25 @@ function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSumma
         <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>看每个来源“有多少数据”和“数据够不够用”，比只看成功失败更接近业务价值。</p>
       </div>
       <div className="space-y-3">
-        {summary.sourceQuality.map((item) => (
+        {summary.sourceQuality.map((item) => {
+          const qualityMeta = getSourceQualityMeta(item.qualityGrade, item.qualityScore);
+          const trend = trendBySource.get(item.source);
+          const trendLabel = trend
+            ? trend.direction === 'up'
+              ? `近7天 +${trend.delta}`
+              : trend.direction === 'down'
+                ? `近7天 ${trend.delta}`
+                : '近7天持平'
+            : '暂无趋势';
+          return (
           <div key={item.source} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{getSourceLabel(item.source)}</p>
-                <p className="mt-1 text-xs text-slate-500">样本 {item.total} 条 · 平均完整度 {item.avgCompleteness}</p>
+                <p className="mt-1 text-xs text-slate-500">样本 {item.total} 条 · 质量分 {item.qualityScore} · 平均完整度 {item.avgCompleteness} · {trendLabel}</p>
               </div>
-              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(item.avgCompleteness >= 60 ? 'success' : item.avgCompleteness >= 40 ? 'warning' : 'danger', themeMode))}>
-                {item.avgCompleteness >= 60 ? '质量较高' : item.avgCompleteness >= 40 ? '待补齐' : '质量偏低'}
+              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(qualityMeta.tone, themeMode))}>
+                {qualityMeta.label}
               </span>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -1334,8 +1367,34 @@ function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSumma
                 </div>
               ))}
             </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                可跟进 {item.activeCount} · 已截止 {item.expiredCount}
+              </div>
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                高完整度 {item.highCompletenessCount} · 脏值 {item.dirtyIssueCount}
+              </div>
+              <div className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                缺预算 {item.missingCounts?.budget ?? 0} · 缺截止 {item.missingCounts?.deadline ?? 0}
+              </div>
+            </div>
+            {item.repairHints?.length > 0 && (
+              <div className={cn('mt-3 rounded-2xl border px-3 py-2 text-xs leading-6', isLight ? 'border-cyan-200 bg-cyan-50/70 text-cyan-800' : 'border-cyan-400/10 bg-cyan-500/8 text-cyan-100/85')}>
+                修复口径：{item.repairHints.join('；')}
+              </div>
+            )}
+            {item.dirtyIssues?.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {item.dirtyIssues.slice(0, 3).map((issue) => (
+                  <span key={`${item.source}-${issue.issue}`} className={cn('rounded-full border px-2.5 py-1 text-[11px]', getBadgeTone('text-orange-200 bg-orange-500/10 border-orange-400/20', themeMode))}>
+                    {issue.issue} · {issue.count}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -1349,9 +1408,10 @@ function SourceGovernancePanel({ summary, themeMode = 'dark' }: { summary: OpsSu
     .map((item) => {
       const failure = summary.runFailureSummary24h[item.source] || 0;
       const score =
-        (100 - item.avgCompleteness)
+        (100 - item.qualityScore)
         + (100 - item.contactCoverage) * 0.35
         + (100 - item.budgetCoverage) * 0.25
+        + item.dirtyIssueCount * 2
         + failure * 3;
       return {
         ...item,
@@ -1379,7 +1439,7 @@ function SourceGovernancePanel({ summary, themeMode = 'dark' }: { summary: OpsSu
                   {index + 1}. {getSourceLabel(item.source)}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  治理指数 {item.score} · 轮次异常 {item.failure} · 平均完整度 {item.avgCompleteness}
+                  治理指数 {item.score} · 轮次异常 {item.failure} · 质量分 {item.qualityScore} · 脏值 {item.dirtyIssueCount}
                 </p>
               </div>
               <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(index === 0 ? 'danger' : index === 1 ? 'warning' : 'default', themeMode))}>
@@ -1397,8 +1457,84 @@ function SourceGovernancePanel({ summary, themeMode = 'dark' }: { summary: OpsSu
                 截止覆盖 {item.deadlineCoverage}%
               </div>
             </div>
+            {item.repairHints?.length > 0 && (
+              <p className={cn('mt-3 rounded-xl border px-3 py-2 text-xs leading-6', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                建议：{item.repairHints.slice(0, 3).join('；')}
+              </p>
+            )}
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceAcceptancePanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  if (!summary) return null;
+
+  const newSources = summary.sourceAcceptance.filter((item) => !item.defaultSource);
+  const candidates = summary.sourceCandidatePool || [];
+
+  return (
+    <section className={cn(
+      'rounded-[24px] border p-5 shadow-[0_18px_56px_rgba(0,0,0,0.2)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>新源验收闸门</h3>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>新数据源先过样本、字段、详情、失败分类和代理策略，再决定是否进入生产扫描。</p>
+        </div>
+        <span className={cn('rounded-full border px-3 py-1.5 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-400')}>
+          {newSources.filter((item) => item.eligibleForProduction).length}/{newSources.length} 可入生产
+        </span>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        {newSources.map((item) => (
+          <div key={item.source} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{getSourceLabel(item.source)}</p>
+                <p className="mt-1 text-xs text-slate-500">验收 {item.passedCount}/{item.totalChecks} · {item.proxyPolicy.policy} · {item.deepCrawlStrategy.mode}</p>
+              </div>
+              <span className={cn('rounded-full border px-2.5 py-1 text-xs', getBadgeTone(item.eligibleForProduction ? 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20' : item.acceptanceScore >= 60 ? 'text-amber-200 bg-amber-500/10 border-amber-400/20' : 'text-red-200 bg-red-500/10 border-red-400/20', themeMode))}>
+                {item.eligibleForProduction ? '可入生产' : item.acceptanceScore >= 60 ? '继续观察' : '暂缓'}
+              </span>
+            </div>
+            <div className="mt-4 space-y-2">
+              {item.checks.map((check) => (
+                <div key={`${item.source}-${check.key}`} className={cn('rounded-xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.03] text-slate-300')}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{check.label}</span>
+                    <span className={check.ok ? 'text-emerald-400' : 'text-amber-400'}>{check.ok ? '通过' : '待补'}</span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-slate-500">{check.detail}</p>
+                </div>
+              ))}
+            </div>
+            <p className={cn('mt-3 rounded-xl border px-3 py-2 text-xs leading-6', isLight ? 'border-cyan-200 bg-cyan-50/70 text-cyan-800' : 'border-cyan-400/10 bg-cyan-500/8 text-cyan-100/85')}>
+              下一步：{item.nextAction}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className={cn('mt-4 rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-white/[0.03]')}>
+        <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>候选池</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {candidates.map((item) => (
+            <div key={item.category} className={cn('rounded-xl border px-3 py-3 text-xs leading-6', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-[#101427] text-slate-300')}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={cn('font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.category}</span>
+                <span>{item.priority}</span>
+              </div>
+              <p className="mt-2 text-slate-500">{item.examples.join(' / ')}</p>
+              <p className="mt-2">{item.strategy}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -2679,7 +2815,7 @@ function App() {
                   <div className="grid grid-cols-2 gap-3 sm:min-w-[18rem]">
                     <div className={cn('rounded-[24px] border p-4', themeMode === 'light' ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.05]')}>
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500">来源命中</p>
-                      <p className={cn('mt-2 text-2xl font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{opsSummary?.sourceHealth.filter(item => item.ok).length ?? 0}/4</p>
+                      <p className={cn('mt-2 text-2xl font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{opsSummary?.sourceHealth.filter(item => item.ok).length ?? 0}/{opsSummary?.sourceHealth.length ?? 0}</p>
                     </div>
                     <div className={cn('rounded-[24px] border p-4', themeMode === 'light' ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.05]')}>
                       <p className="text-xs uppercase tracking-[0.2em] text-slate-500">今日扫描</p>
@@ -2719,6 +2855,8 @@ function App() {
             <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
 
             <SourceGovernancePanel summary={opsSummary} themeMode={themeMode} />
+
+            <SourceAcceptancePanel summary={opsSummary} themeMode={themeMode} />
 
             <section className={cn(
               'rounded-[32px] border p-6 shadow-[0_24px_100px_rgba(0,0,0,0.3)]',

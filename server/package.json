@@ -1,6 +1,6 @@
 {
   "name": "yupi-hot-monitor-server",
-  "version": "1.4.0-dev",
+  "version": "1.4.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -31,6 +31,7 @@
     "axios": "^1.13.4",
     "cheerio": "^1.1.0",
     "cors": "^2.8.6",
+    "crypto-js": "^4.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
+    "@types/crypto-js": "^4.2.2",
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.0",
     "@types/nodemailer": "^7.0.9",
