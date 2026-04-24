@@ -233,6 +233,7 @@ export interface DetailEnrichmentStatus {
     lastFinishedAt?: string;
     lastError?: string;
     currentHotspotId?: string;
+    currentHotspotIds?: string[];
   };
   data: DetailEnrichmentStatusItem[];
 }
@@ -265,6 +266,7 @@ export interface HealthStatus {
     lastFinishedAt?: string;
     lastError?: string;
     currentHotspotId?: string;
+    currentHotspotIds?: string[];
   };
 }
 

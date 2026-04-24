@@ -11,9 +11,15 @@ type DetailQueueState = {
   lastFinishedAt?: Date;
   lastError?: string;
   currentHotspotId?: string;
+  currentHotspotIds?: string[];
 };
 
 const pendingIds = new Set<string>();
+const activeIds = new Set<string>();
+const DETAIL_ENRICHMENT_CONCURRENCY = Math.min(
+  4,
+  Math.max(1, Number.parseInt(process.env.TENDER_DETAIL_ENRICHMENT_CONCURRENCY || '2', 10) || 2)
+);
 const state: DetailQueueState = {
   running: false,
   pendingCount: 0,
@@ -289,27 +295,42 @@ async function processQueue(): Promise<void> {
   state.running = true;
   state.lastStartedAt = new Date();
   state.lastError = undefined;
+  state.processedCount = 0;
 
   try {
-    while (pendingIds.size > 0) {
-      const [hotspotId] = pendingIds;
-      if (!hotspotId) break;
-      pendingIds.delete(hotspotId);
-      state.pendingCount = pendingIds.size;
-      state.currentHotspotId = hotspotId;
-      try {
-        await enrichSingleHotspot(hotspotId);
-        state.processedCount += 1;
-      } catch (error) {
-        state.lastError = error instanceof Error ? error.message : String(error);
-        console.error('Detail enrichment failed:', hotspotId, error);
+    async function worker(): Promise<void> {
+      while (pendingIds.size > 0) {
+        const [hotspotId] = pendingIds;
+        if (!hotspotId) break;
+        pendingIds.delete(hotspotId);
+        activeIds.add(hotspotId);
+        state.pendingCount = pendingIds.size;
+        state.currentHotspotId = hotspotId;
+        state.currentHotspotIds = [...activeIds];
+        try {
+          await enrichSingleHotspot(hotspotId);
+          state.processedCount += 1;
+        } catch (error) {
+          state.lastError = error instanceof Error ? error.message : String(error);
+          console.error('Detail enrichment failed:', hotspotId, error);
+        } finally {
+          activeIds.delete(hotspotId);
+          state.currentHotspotIds = [...activeIds];
+          state.currentHotspotId = state.currentHotspotIds[0];
+        }
       }
     }
+
+    await Promise.all(Array.from({ length: Math.min(DETAIL_ENRICHMENT_CONCURRENCY, pendingIds.size) }, worker));
   } finally {
     state.running = false;
     state.currentHotspotId = undefined;
+    state.currentHotspotIds = [];
     state.pendingCount = pendingIds.size;
     state.lastFinishedAt = new Date();
+    if (pendingIds.size > 0) {
+      void processQueue();
+    }
   }
 }
 
