@@ -1145,6 +1145,58 @@ function QualityCoverageCard({ summary, themeMode = 'dark' }: { summary: OpsSumm
   );
 }
 
+function AIQualityCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  if (!summary?.ai) return null;
+
+  const successRate = summary.ai.successRate;
+  const fallbackRate = summary.ai.fallbackRate;
+
+  return (
+    <section className={cn(
+      'rounded-[24px] border p-5 shadow-[0_18px_56px_rgba(0,0,0,0.2)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>AI 分析</h3>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>观察 OpenClaw 实际返回和规则回退比例。</p>
+        </div>
+        <div className={cn('rounded-2xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
+          样本 {summary.ai.total} 条
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <QualityMetric title="AI 成功率" value={`${successRate}%`} caption={`${summary.ai.successCount} 条由 AI 直接判断`} themeMode={themeMode} />
+        <QualityMetric title="规则回退率" value={`${fallbackRate}%`} caption={`${summary.ai.fallbackCount} 条使用规则兜底`} themeMode={themeMode} />
+      </div>
+
+      <div className="mt-5 space-y-3">
+        <div>
+          <div className="mb-1.5 flex items-center justify-between text-sm">
+            <span className={cn(isLight ? 'text-slate-700' : 'text-slate-300')}>AI 成功</span>
+            <span className={cn('font-medium', isLight ? 'text-slate-900' : 'text-white')}>{successRate}%</span>
+          </div>
+          <div className={cn('h-2 overflow-hidden rounded-full', isLight ? 'bg-slate-100' : 'bg-white/8')}>
+            <div className="h-full rounded-full bg-[linear-gradient(90deg,#22c55e,#14b8a6)]" style={{ width: `${successRate}%` }} />
+          </div>
+        </div>
+        {summary.ai.fallbackReasons.length > 0 && (
+          <div className={cn('rounded-[18px] border p-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-[#0f1425] text-slate-300')}>
+            {summary.ai.fallbackReasons.slice(0, 3).map((item) => (
+              <div key={item.reason} className="flex items-center justify-between gap-3 py-1">
+                <span>{item.reason}</span>
+                <span className={cn('font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.count} 条</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SourceQualityPanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
   const isLight = themeMode === 'light';
   if (!summary) return null;
@@ -2541,8 +2593,10 @@ function App() {
 
             <section className="grid gap-5 xl:grid-cols-[1.05fr_1fr]">
               <QualityCoverageCard summary={opsSummary} themeMode={themeMode} />
-              <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
+              <AIQualityCard summary={opsSummary} themeMode={themeMode} />
             </section>
+
+            <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
 
             <SourceGovernancePanel summary={opsSummary} themeMode={themeMode} />
 

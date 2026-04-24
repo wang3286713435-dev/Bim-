@@ -186,6 +186,14 @@ export interface OpsSummary {
     detailCoverage: number;
     activeCoverage: number;
   };
+  ai: {
+    total: number;
+    successCount: number;
+    fallbackCount: number;
+    successRate: number;
+    fallbackRate: number;
+    fallbackReasons: Array<{ reason: string; count: number }>;
+  };
   sourceQuality: Array<{
     source: string;
     total: number;

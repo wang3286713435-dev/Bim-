@@ -323,7 +323,8 @@ router.get('/ops/summary', async (req, res) => {
       latestRun,
       recentRuns,
       recentSourceProbes,
-      hotspotQualityRows
+      hotspotQualityRows,
+      aiQualityRows
     ] = await Promise.all([
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES }, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
@@ -378,6 +379,15 @@ router.get('/ops/summary', async (req, res) => {
           tenderContact: true,
           tenderPhone: true,
           tenderDetailSource: true
+        }
+      }),
+      prisma.hotspot.findMany({
+        where: {
+          source: { in: TENDER_SOURCES }
+        },
+        select: {
+          source: true,
+          relevanceReason: true
         }
       })
     ]);
@@ -541,6 +551,36 @@ router.get('/ops/summary', async (req, res) => {
       detailCoverage: quality.total ? Math.round((quality.detailCount / quality.total) * 100) : 0,
       activeCoverage: quality.total ? Math.round((quality.activeCount / quality.total) * 100) : 0
     };
+    const aiSummary = {
+      total: aiQualityRows.length,
+      successCount: 0,
+      fallbackCount: 0,
+      fallbackReasons: [] as Array<{ reason: string; count: number }>
+    };
+    const aiReasonBuckets = new Map<string, number>();
+
+    function normalizeAIReason(reason?: string | null): string {
+      const text = (reason || '').trim();
+      if (/未配置 AI 服务/.test(text)) return '未配置 AI 服务';
+      if (/AI 分析超时或失败|规则投标分析|规则判断/.test(text)) return 'AI 超时/失败后规则回退';
+      if (!text) return '无 AI 判断记录';
+      return 'AI 成功返回';
+    }
+
+    for (const row of aiQualityRows) {
+      const reason = normalizeAIReason(row.relevanceReason);
+      if (reason === 'AI 成功返回') {
+        aiSummary.successCount += 1;
+      } else {
+        aiSummary.fallbackCount += 1;
+      }
+      aiReasonBuckets.set(reason, (aiReasonBuckets.get(reason) || 0) + 1);
+    }
+
+    aiSummary.fallbackReasons = [...aiReasonBuckets.entries()]
+      .filter(([reason]) => reason !== 'AI 成功返回')
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count);
 
     res.json({
       stats: {
@@ -548,6 +588,11 @@ router.get('/ops/summary', async (req, res) => {
         todayHotspots
       },
       quality: qualitySummary,
+      ai: {
+        ...aiSummary,
+        successRate: aiSummary.total ? Math.round((aiSummary.successCount / aiSummary.total) * 100) : 0,
+        fallbackRate: aiSummary.total ? Math.round((aiSummary.fallbackCount / aiSummary.total) * 100) : 0
+      },
       sourceQuality,
       runtimeConfig,
       sourceHealth,
