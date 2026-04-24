@@ -187,12 +187,31 @@ export interface OpsSummary {
     activeCoverage: number;
   };
   ai: {
+    source?: 'logs' | 'hotspotReason';
     total: number;
     successCount: number;
     fallbackCount: number;
+    errorCount?: number;
     successRate: number;
     fallbackRate: number;
+    averageElapsedMs?: number;
+    p95ElapsedMs?: number;
+    latestAt?: string | null;
+    providerStats?: Array<{
+      provider: string;
+      total: number;
+      successCount: number;
+      fallbackCount: number;
+      averageElapsedMs: number;
+    }>;
     fallbackReasons: Array<{ reason: string; count: number }>;
+    recentFailures?: Array<{
+      title: string | null;
+      source: string | null;
+      reason: string;
+      elapsedMs: number;
+      createdAt: string;
+    }>;
   };
   sourceQuality: Array<{
     source: string;

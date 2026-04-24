@@ -15,6 +15,16 @@ function hasUsableOpenRouterKey(): boolean {
   return Boolean(key && key !== 'your_openrouter_api_key_here');
 }
 
+function getAIProviderName(): NonNullable<AIAnalysis['telemetry']>['provider'] {
+  if (process.env.AI_PROVIDER === 'openclaw') return 'openclaw';
+  if (hasUsableOpenRouterKey()) return 'openrouter';
+  return 'rule';
+}
+
+function errorToMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function expandKeyword(keyword: string): Promise<string[]> {
   // 缓存命中
   if (expansionCache.has(keyword)) {
@@ -200,13 +210,27 @@ function buildAIInputVariants(content: string): string[] {
 }
 
 export async function analyzeContent(content: string, keyword: string, preMatchResult?: { matched: boolean; matchedTerms: string[] }): Promise<AIAnalysis> {
+  const startedAt = Date.now();
+  const provider = getAIProviderName();
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
   if (!hasUsableOpenRouterKey() && process.env.AI_PROVIDER !== 'openclaw') {
     console.warn('OpenRouter API key not configured, using fallback analysis');
-    return buildRuleBasedTenderAnalysis(content, matchResult, '未配置 AI 服务，使用规则投标分析');
+    return {
+      ...buildRuleBasedTenderAnalysis(content, matchResult, '未配置 AI 服务，使用规则投标分析'),
+      telemetry: {
+        provider: 'rule',
+        status: 'fallback',
+        fallbackUsed: true,
+        attemptCount: 0,
+        elapsedMs: Date.now() - startedAt,
+        errorMessage: 'AI provider not configured'
+      }
+    };
   }
+
+  let attemptCount = 0;
 
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
@@ -215,6 +239,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
 
     for (let i = 0; i < variants.length; i++) {
       try {
+        attemptCount += 1;
         const parsed = await generateStructuredJson<AIAnalysis>([
             {
               role: 'system',
@@ -234,7 +259,14 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
           importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance)
             ? parsed.importance
             : 'low',
-          summary: String(parsed.summary || '').slice(0, 150)
+          summary: String(parsed.summary || '').slice(0, 150),
+          telemetry: {
+            provider,
+            status: 'success',
+            fallbackUsed: false,
+            attemptCount,
+            elapsedMs: Date.now() - startedAt
+          }
         };
       } catch (error) {
         lastError = error;
@@ -245,7 +277,17 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     throw lastError;
   } catch (error) {
     console.error('AI analysis failed:', error);
-    return buildRuleBasedTenderAnalysis(content, matchResult, 'AI 分析超时或失败，使用规则投标分析');
+    return {
+      ...buildRuleBasedTenderAnalysis(content, matchResult, 'AI 分析超时或失败，使用规则投标分析'),
+      telemetry: {
+        provider,
+        status: 'fallback',
+        fallbackUsed: true,
+        attemptCount,
+        elapsedMs: Date.now() - startedAt,
+        errorMessage: errorToMessage(error)
+      }
+    };
   }
 }
 

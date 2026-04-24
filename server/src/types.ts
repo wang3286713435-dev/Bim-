@@ -73,6 +73,14 @@ export interface AIAnalysis {
   keywordMentioned: boolean; // 内容中是否直接提及了关键词或其核心概念
   importance: 'low' | 'medium' | 'high' | 'urgent';
   summary: string; // 与关键词的关联说明（不是单纯的内容介绍）
+  telemetry?: {
+    provider: 'openclaw' | 'openrouter' | 'rule' | 'unknown';
+    status: 'success' | 'fallback' | 'error';
+    fallbackUsed: boolean;
+    attemptCount: number;
+    elapsedMs: number;
+    errorMessage?: string;
+  };
 }
 
 export interface HotspotWithKeyword {

@@ -9,6 +9,7 @@ import { notifyFeishu } from '../services/feishu.js';
 import { createCrawlRun, logSourceProbe, updateCrawlRun } from '../services/crawlRunLogger.js';
 import { getRuntimeConfig } from '../services/runtimeConfig.js';
 import { enqueueHotspotDetailEnrichment } from '../services/tenderDetailEnrichment.js';
+import { recordAIAnalysisLog } from '../services/aiAnalysisLogger.js';
 import {
   buildSearchQueries,
   getEnabledTenderSources,
@@ -171,16 +172,40 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
           const analysis = await analyzeContent(fullText, keyword.text, preMatch);
 
           if (!analysis.isReal) {
+            await recordAIAnalysisLog({
+              runId,
+              source: item.source,
+              keywordText: keyword.text,
+              title: item.title,
+              url: item.url,
+              analysis
+            });
             console.log(`  ❌ Filtered fake/spam: ${item.title.slice(0, 30)}...`);
             return 'filtered';
           }
 
           if (analysis.relevance < runtimeConfig.minRelevanceScore) {
+            await recordAIAnalysisLog({
+              runId,
+              source: item.source,
+              keywordText: keyword.text,
+              title: item.title,
+              url: item.url,
+              analysis
+            });
             console.log(`  ⏭ Low relevance (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
             return 'filtered';
           }
 
           if (!analysis.keywordMentioned && analysis.relevance < runtimeConfig.strictKeywordMentionScore) {
+            await recordAIAnalysisLog({
+              runId,
+              source: item.source,
+              keywordText: keyword.text,
+              title: item.title,
+              url: item.url,
+              analysis
+            });
             console.log(`  ⏭ Keyword not mentioned & relevance < ${runtimeConfig.strictKeywordMentionScore} (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
             return 'filtered';
           }
@@ -238,6 +263,15 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
           });
 
           console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (${analysis.importance})`);
+          await recordAIAnalysisLog({
+            runId,
+            hotspotId: hotspot.id,
+            source: item.source,
+            keywordText: keyword.text,
+            title: item.title,
+            url: item.url,
+            analysis
+          });
           enqueueHotspotDetailEnrichment(hotspot.id);
 
           await prisma.notification.create({

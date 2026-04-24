@@ -324,7 +324,9 @@ router.get('/ops/summary', async (req, res) => {
       recentRuns,
       recentSourceProbes,
       hotspotQualityRows,
-      aiQualityRows
+      aiQualityRows,
+      recentAiAnalysisLogs,
+      latestAiAnalysisLog
     ] = await Promise.all([
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES }, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
@@ -388,6 +390,44 @@ router.get('/ops/summary', async (req, res) => {
         select: {
           source: true,
           relevanceReason: true
+        }
+      }),
+      prisma.aiAnalysisLog.findMany({
+        where: {
+          createdAt: { gte: since }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+        select: {
+          provider: true,
+          status: true,
+          fallbackUsed: true,
+          attemptCount: true,
+          elapsedMs: true,
+          relevance: true,
+          importance: true,
+          reason: true,
+          errorMessage: true,
+          source: true,
+          title: true,
+          createdAt: true
+        }
+      }),
+      prisma.aiAnalysisLog.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          provider: true,
+          status: true,
+          fallbackUsed: true,
+          attemptCount: true,
+          elapsedMs: true,
+          relevance: true,
+          importance: true,
+          reason: true,
+          errorMessage: true,
+          source: true,
+          title: true,
+          createdAt: true
         }
       })
     ]);
@@ -582,17 +622,107 @@ router.get('/ops/summary', async (req, res) => {
       .map(([reason, count]) => ({ reason, count }))
       .sort((a, b) => b.count - a.count);
 
+    const aiLogSummary = {
+      source: recentAiAnalysisLogs.length > 0 ? 'logs' : 'hotspotReason',
+      total: recentAiAnalysisLogs.length || aiSummary.total,
+      successCount: 0,
+      fallbackCount: 0,
+      errorCount: 0,
+      successRate: 0,
+      fallbackRate: 0,
+      averageElapsedMs: 0,
+      p95ElapsedMs: 0,
+      latestAt: latestAiAnalysisLog?.createdAt ?? null,
+      providerStats: [] as Array<{ provider: string; total: number; successCount: number; fallbackCount: number; averageElapsedMs: number }>,
+      fallbackReasons: aiSummary.fallbackReasons,
+      recentFailures: [] as Array<{ title: string | null; source: string | null; reason: string; elapsedMs: number; createdAt: Date }>
+    };
+
+    if (recentAiAnalysisLogs.length > 0) {
+      const elapsedValues = recentAiAnalysisLogs
+        .map((row) => row.elapsedMs)
+        .filter((value) => Number.isFinite(value) && value >= 0)
+        .sort((a, b) => a - b);
+      const providerMap = new Map<string, { provider: string; total: number; successCount: number; fallbackCount: number; elapsedTotal: number }>();
+      const fallbackBuckets = new Map<string, number>();
+
+      for (const row of recentAiAnalysisLogs) {
+        if (row.status === 'success' && !row.fallbackUsed) {
+          aiLogSummary.successCount += 1;
+        } else if (row.status === 'error') {
+          aiLogSummary.errorCount += 1;
+        } else {
+          aiLogSummary.fallbackCount += 1;
+        }
+
+        const provider = row.provider || 'unknown';
+        const providerItem = providerMap.get(provider) || {
+          provider,
+          total: 0,
+          successCount: 0,
+          fallbackCount: 0,
+          elapsedTotal: 0
+        };
+        providerItem.total += 1;
+        providerItem.elapsedTotal += row.elapsedMs || 0;
+        if (row.status === 'success' && !row.fallbackUsed) {
+          providerItem.successCount += 1;
+        } else {
+          providerItem.fallbackCount += 1;
+        }
+        providerMap.set(provider, providerItem);
+
+        if (row.fallbackUsed || row.status !== 'success') {
+          const reason = row.errorMessage || row.reason || '未知 AI 回退';
+          fallbackBuckets.set(reason, (fallbackBuckets.get(reason) || 0) + 1);
+        }
+      }
+
+      aiLogSummary.averageElapsedMs = elapsedValues.length
+        ? Math.round(elapsedValues.reduce((sum, value) => sum + value, 0) / elapsedValues.length)
+        : 0;
+      aiLogSummary.p95ElapsedMs = elapsedValues.length
+        ? elapsedValues[Math.min(elapsedValues.length - 1, Math.floor(elapsedValues.length * 0.95))]
+        : 0;
+      aiLogSummary.successRate = aiLogSummary.total ? Math.round((aiLogSummary.successCount / aiLogSummary.total) * 100) : 0;
+      aiLogSummary.fallbackRate = aiLogSummary.total ? Math.round(((aiLogSummary.fallbackCount + aiLogSummary.errorCount) / aiLogSummary.total) * 100) : 0;
+      aiLogSummary.providerStats = [...providerMap.values()]
+        .map((item) => ({
+          provider: item.provider,
+          total: item.total,
+          successCount: item.successCount,
+          fallbackCount: item.fallbackCount,
+          averageElapsedMs: item.total ? Math.round(item.elapsedTotal / item.total) : 0
+        }))
+        .sort((a, b) => b.total - a.total);
+      aiLogSummary.fallbackReasons = [...fallbackBuckets.entries()]
+        .map(([reason, count]) => ({ reason: reason.slice(0, 80), count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      aiLogSummary.recentFailures = recentAiAnalysisLogs
+        .filter((row) => row.fallbackUsed || row.status !== 'success')
+        .slice(0, 5)
+        .map((row) => ({
+          title: row.title,
+          source: row.source,
+          reason: (row.errorMessage || row.reason || '未知 AI 回退').slice(0, 120),
+          elapsedMs: row.elapsedMs,
+          createdAt: row.createdAt
+        }));
+    } else {
+      aiLogSummary.successCount = aiSummary.successCount;
+      aiLogSummary.fallbackCount = aiSummary.fallbackCount;
+      aiLogSummary.successRate = aiSummary.total ? Math.round((aiSummary.successCount / aiSummary.total) * 100) : 0;
+      aiLogSummary.fallbackRate = aiSummary.total ? Math.round((aiSummary.fallbackCount / aiSummary.total) * 100) : 0;
+    }
+
     res.json({
       stats: {
         totalHotspots,
         todayHotspots
       },
       quality: qualitySummary,
-      ai: {
-        ...aiSummary,
-        successRate: aiSummary.total ? Math.round((aiSummary.successCount / aiSummary.total) * 100) : 0,
-        fallbackRate: aiSummary.total ? Math.round((aiSummary.fallbackCount / aiSummary.total) * 100) : 0
-      },
+      ai: aiLogSummary,
       sourceQuality,
       runtimeConfig,
       sourceHealth,

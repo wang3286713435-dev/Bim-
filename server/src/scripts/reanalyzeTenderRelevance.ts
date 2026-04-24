@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { analyzeContent, preMatchKeyword } from '../services/ai.js';
+import { recordAIAnalysisLog } from '../services/aiAnalysisLogger.js';
 
 const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'] as const;
 
@@ -104,6 +105,14 @@ async function main(): Promise<void> {
         importance: analysis.importance,
         summary: analysis.summary,
       },
+    });
+    await recordAIAnalysisLog({
+      hotspotId: row.id,
+      source: row.source,
+      keywordText: keyword,
+      title: row.title,
+      url: row.url,
+      analysis,
     });
     return { preview, updated: true };
   });

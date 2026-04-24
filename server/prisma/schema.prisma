@@ -111,6 +111,32 @@ model CrawlRun {
   @@index([status])
 }
 
+model AiAnalysisLog {
+  id           String   @id @default(uuid())
+  runId        String?
+  hotspotId    String?
+  source       String?
+  keywordText  String?
+  title        String?
+  url          String?
+  provider     String   @default("unknown") // openclaw/openrouter/rule
+  status       String   @default("success") // success/fallback/error
+  fallbackUsed Boolean  @default(false)
+  attemptCount Int      @default(0)
+  elapsedMs    Int      @default(0)
+  relevance    Int?
+  importance   String?
+  reason       String?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([provider, createdAt])
+  @@index([runId])
+  @@index([hotspotId])
+}
+
 model SourceProbe {
   id           String    @id @default(uuid())
   runId        String

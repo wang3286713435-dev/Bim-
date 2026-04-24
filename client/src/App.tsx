@@ -1151,6 +1151,13 @@ function AIQualityCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | 
 
   const successRate = summary.ai.successRate;
   const fallbackRate = summary.ai.fallbackRate;
+  const provider = summary.ai.providerStats?.[0];
+  const latestLabel = summary.ai.latestAt ? relativeTime(summary.ai.latestAt) : '暂无任务记录';
+  const formatElapsed = (value?: number) => {
+    if (!value) return '暂无';
+    if (value >= 1000) return `${Math.round(value / 1000)}s`;
+    return `${value}ms`;
+  };
 
   return (
     <section className={cn(
@@ -1160,16 +1167,20 @@ function AIQualityCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | 
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>AI 分析</h3>
-          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>观察 OpenClaw 实际返回和规则回退比例。</p>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>
+            {summary.ai.source === 'logs' ? '基于真实任务日志统计 OpenClaw 耗时、成功和回退。' : '暂无新任务日志，暂按历史判断文案估算。'}
+          </p>
         </div>
         <div className={cn('rounded-2xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
-          样本 {summary.ai.total} 条
+          近24h {summary.ai.total} 次
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <QualityMetric title="AI 成功率" value={`${successRate}%`} caption={`${summary.ai.successCount} 条由 AI 直接判断`} themeMode={themeMode} />
-        <QualityMetric title="规则回退率" value={`${fallbackRate}%`} caption={`${summary.ai.fallbackCount} 条使用规则兜底`} themeMode={themeMode} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <QualityMetric title="AI 成功率" value={`${successRate}%`} caption={`${summary.ai.successCount} 次直接返回`} themeMode={themeMode} />
+        <QualityMetric title="规则回退率" value={`${fallbackRate}%`} caption={`${summary.ai.fallbackCount + (summary.ai.errorCount || 0)} 次兜底/异常`} themeMode={themeMode} />
+        <QualityMetric title="平均耗时" value={formatElapsed(summary.ai.averageElapsedMs)} caption={`P95 ${formatElapsed(summary.ai.p95ElapsedMs)}`} themeMode={themeMode} />
+        <QualityMetric title="最近分析" value={latestLabel} caption={provider ? `${provider.provider} · ${provider.total} 次` : '等待下一轮扫描'} themeMode={themeMode} />
       </div>
 
       <div className="mt-5 space-y-3">
@@ -1182,6 +1193,18 @@ function AIQualityCard({ summary, themeMode = 'dark' }: { summary: OpsSummary | 
             <div className="h-full rounded-full bg-[linear-gradient(90deg,#22c55e,#14b8a6)]" style={{ width: `${successRate}%` }} />
           </div>
         </div>
+        {summary.ai.providerStats && summary.ai.providerStats.length > 0 && (
+          <div className={cn('grid gap-2 rounded-[18px] border p-3 text-xs sm:grid-cols-2', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-[#0f1425] text-slate-300')}>
+            {summary.ai.providerStats.slice(0, 4).map((item) => (
+              <div key={item.provider} className="flex items-center justify-between gap-3">
+                <span className="uppercase tracking-[0.16em]">{item.provider}</span>
+                <span className={cn('font-medium', isLight ? 'text-slate-900' : 'text-white')}>
+                  {item.successCount}/{item.total} 成功 · {formatElapsed(item.averageElapsedMs)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         {summary.ai.fallbackReasons.length > 0 && (
           <div className={cn('rounded-[18px] border p-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-[#0f1425] text-slate-300')}>
             {summary.ai.fallbackReasons.slice(0, 3).map((item) => (
