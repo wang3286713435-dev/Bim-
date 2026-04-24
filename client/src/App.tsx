@@ -75,6 +75,11 @@ const SOURCE_LABELS: Record<string, string> = {
   gzebpubservice: '广州交易平台'
 };
 
+function normalizeTenderPlatform(value: string | null | undefined): string {
+  if (value === '广州公共资源交易平台') return '广州公共资源交易公共服务平台';
+  return value || '';
+}
+
 const DASHBOARD_RECENT_SEARCH_KEY = 'bim-tender-dashboard-recent-searches';
 const MANUAL_RECENT_SEARCH_KEY = 'bim-tender-manual-recent-searches';
 const SAVED_FILTER_VIEWS_KEY = 'bim-tender-saved-filter-views';
@@ -2187,7 +2192,10 @@ function App() {
     if (searchFilters.tenderRegion) {
       results = results.filter(item => (item.tenderRegion || '').includes(searchFilters.tenderRegion) || (item.tenderCity || '').includes(searchFilters.tenderRegion));
     }
-    if (searchFilters.tenderPlatform) results = results.filter(item => item.tenderPlatform === searchFilters.tenderPlatform);
+    if (searchFilters.tenderPlatform) {
+      const targetPlatform = normalizeTenderPlatform(searchFilters.tenderPlatform);
+      results = results.filter(item => normalizeTenderPlatform(item.tenderPlatform) === targetPlatform);
+    }
     if (searchFilters.tenderMinBudgetWan) {
       const min = Number(searchFilters.tenderMinBudgetWan);
       results = results.filter(item => item.tenderBudgetWan != null && item.tenderBudgetWan >= min);

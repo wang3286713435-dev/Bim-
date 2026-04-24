@@ -144,7 +144,7 @@ const TENDER_PLATFORM_OPTIONS = [
   { value: '深圳公共资源交易中心', label: '深圳公共资源交易中心' },
   { value: '深圳阳光采购平台', label: '深圳阳光采购平台' },
   { value: '广东省公共资源交易平台', label: '广东省公共资源交易平台' },
-  { value: '广州公共资源交易平台', label: '广州公共资源交易平台' },
+  { value: '广州公共资源交易公共服务平台', label: '广州公共资源交易公共服务平台' },
 ];
 
 function Dropdown({

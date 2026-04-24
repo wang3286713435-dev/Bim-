@@ -34,6 +34,14 @@ function getQueryNumber(value: unknown): number | undefined {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function normalizeTenderPlatformFilter(value: string): string[] {
+  const aliases: Record<string, string[]> = {
+    '广州公共资源交易平台': ['广州公共资源交易平台', '广州公共资源交易公共服务平台'],
+    '广州公共资源交易公共服务平台': ['广州公共资源交易平台', '广州公共资源交易公共服务平台']
+  };
+  return aliases[value] || [value];
+}
+
 function getEffectiveDeadlineTime(item: {
   tenderDeadline?: Date | string | null;
   tenderBidOpenTime?: Date | string | null;
@@ -112,7 +120,16 @@ router.get('/', async (req, res) => {
         ]
       });
     }
-    if (tenderPlatformValue) where.tenderPlatform = tenderPlatformValue;
+    if (tenderPlatformValue) {
+      const platformValues = normalizeTenderPlatformFilter(tenderPlatformValue);
+      if (platformValues.length === 1) {
+        where.tenderPlatform = platformValues[0];
+      } else {
+        andConditions.push({
+          OR: platformValues.map((platform) => ({ tenderPlatform: platform }))
+        });
+      }
+    }
     if (searchTextValue) {
       const textConditions = searchModeValue === 'title'
         ? [
