@@ -1,8 +1,8 @@
 import { prisma } from '../db.js';
 
 export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational' | 'cebpubservice';
-export const DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'];
-export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS, 'ccgp', 'ggzyNational', 'cebpubservice'];
+export const DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'];
+export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS];
 
 export type RuntimeConfig = {
   tenderSources: TenderSourceId[];
