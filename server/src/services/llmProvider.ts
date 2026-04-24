@@ -20,7 +20,7 @@ function hasUsableOpenRouterKey(): boolean {
   return Boolean(key && key !== 'your_openrouter_api_key_here');
 }
 
-function extractJsonPayload(raw: string): string {
+export function extractJsonPayload(raw: string): string {
   const trimmed = raw.trim();
   const objectMatch = trimmed.match(/\{[\s\S]*\}/);
   if (objectMatch) return objectMatch[0];
@@ -78,6 +78,10 @@ async function callOpenClaw(messages: Message[]): Promise<string> {
   } catch {
     return output;
   }
+}
+
+export async function debugStructuredText(messages: Message[], options?: { maxTokens?: number; temperature?: number }): Promise<string> {
+  return generateStructuredText(messages, options);
 }
 
 export async function generateStructuredText(messages: Message[], options?: { maxTokens?: number; temperature?: number }): Promise<string> {

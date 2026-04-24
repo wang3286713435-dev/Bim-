@@ -16,6 +16,7 @@
     "sync:feishu": "tsx src/scripts/syncFeishuBitable.ts",
     "repair:tender-data": "tsx src/scripts/repairTenderData.ts",
     "reanalyze:tender-relevance": "tsx src/scripts/reanalyzeTenderRelevance.ts",
+    "probe:openclaw-analysis": "tsx src/scripts/probeOpenClawAnalysis.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

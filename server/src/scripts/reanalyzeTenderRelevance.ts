@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
+import { analyzeContent, preMatchKeyword } from '../services/ai.js';
 
 const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'] as const;
 
@@ -37,6 +37,19 @@ async function mapLimit<T, R>(items: T[], concurrency: number, worker: (item: T)
   return results;
 }
 
+function buildReanalysisKeywords(keyword: string): string[] {
+  const terms = new Set<string>([keyword]);
+  if (/BIM/i.test(keyword)) terms.add('BIM');
+  if (keyword.includes('建筑信息模型')) {
+    terms.add('建筑信息模型');
+    terms.add('BIM');
+  }
+  for (const term of ['设计', '正向设计', '全过程咨询', '咨询', '施工应用', '深化设计', '技术服务', '智慧建造', 'CIM']) {
+    if (keyword.includes(term)) terms.add(term);
+  }
+  return [...terms];
+}
+
 async function main(): Promise<void> {
   const apply = hasFlag('--apply');
   const limit = getLimit();
@@ -49,6 +62,7 @@ async function main(): Promise<void> {
         { relevanceReason: { contains: '未配置 AI 服务，使用默认分数' } },
         { relevanceReason: { contains: '未配置 AI 服务，使用规则投标分析' } },
         { relevanceReason: { contains: 'AI 分析失败，使用默认分数' } },
+        { relevanceReason: { contains: 'AI 分析超时或失败，使用规则投标分析' } },
       ],
     },
     include: {
@@ -62,7 +76,7 @@ async function main(): Promise<void> {
 
   const results = await mapLimit(rows, concurrency, async (row) => {
     const keyword = row.keyword?.text || 'BIM';
-    const expanded = await expandKeyword(keyword);
+    const expanded = buildReanalysisKeywords(keyword);
     const fullText = `${row.title}\n${row.content}`;
     const preMatch = preMatchKeyword(fullText, expanded);
     const analysis = await analyzeContent(fullText, keyword, preMatch);
