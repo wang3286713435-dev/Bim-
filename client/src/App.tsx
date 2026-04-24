@@ -1802,6 +1802,7 @@ function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const appVersion = healthStatus?.version || '1.2.0';
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -2314,7 +2315,7 @@ function App() {
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-cyan-300/75">BIM Tender Command</p>
                 <h1 className={cn('mt-1 text-2xl font-semibold tracking-tight sm:text-3xl', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>BIM 招采监控台</h1>
-                <p className={cn('mt-1 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>Version 1.2.0-dev</p>
+                <p className={cn('mt-1 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>Version {appVersion}</p>
               </div>
             </div>
 

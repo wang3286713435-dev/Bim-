@@ -5,7 +5,7 @@ import { Server } from 'socket.io';
 import dotenv from 'dotenv';
 import cron from 'node-cron';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { prisma } from './db.js';
@@ -26,6 +26,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const hasClientBuild = existsSync(path.join(clientDistPath, 'index.html'));
+const serverPackagePath = path.resolve(__dirname, '../package.json');
+
+function getAppVersion(): string {
+  try {
+    const raw = readFileSync(serverPackagePath, 'utf8');
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+const APP_VERSION = getAppVersion();
 
 const app = express();
 const httpServer = createServer(app);
@@ -51,7 +64,7 @@ app.get('/api/health', async (req, res) => {
   const runtimeConfig = await getRuntimeConfig();
   res.json({
     status: 'ok',
-    version: '1.2.0',
+    version: APP_VERSION,
     mode: 'bim-tender-monitor',
     frontend: {
       mode: hasClientBuild ? 'served-by-backend' : 'dev-server-required'
@@ -141,7 +154,7 @@ httpServer.listen(PORT, async () => {
   }
 
   console.log(`
-  🔥 BIM Tender Monitor v1.2 启动成功!
+  🔥 BIM Tender Monitor v${APP_VERSION} 启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check scheduled every 2 hours
