@@ -1,7 +1,7 @@
 import { prisma } from '../db.js';
 import { extractJsonPayload, debugStructuredText } from '../services/llmProvider.js';
 
-const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'] as const;
+const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'] as const;
 
 function cleanContentForProbe(content: string): string {
   return content

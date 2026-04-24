@@ -1,9 +1,10 @@
 import axios from 'axios';
 import { AxiosError } from 'axios';
 import { load } from 'cheerio';
-import type { SearchResult } from '../types.js';
+import type { SearchResult, TenderMetadata } from '../types.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 import { axiosWithSourceProxy, axiosWithSourceProxyDetailed, markProxySoftFailure } from './proxyPool.js';
+import { extractTenderDetailFields } from './tenderDetailExtractor.js';
 
 class RateLimiter {
   private lastRequestTime = 0;
@@ -33,6 +34,7 @@ const SHENZHEN_SITE_PREFIXES = ['4403'];
 const SHENZHEN_SITE_NAMES = ['深圳', '福田', '罗湖', '南山', '宝安', '龙岗', '龙华', '坪山', '光明', '盐田', '大鹏', '深汕'];
 const DETAIL_URL_HEALTH_TTL_MS = 6 * 60 * 60 * 1000;
 const detailUrlHealthCache = new Map<string, { healthy: boolean; checkedAt: number }>();
+const ccgpDetailCache = new Map<string, { content: string; tender: TenderMetadata; fetchedAt: number }>();
 
 function stripHtml(value: string | null | undefined): string {
   if (!value) return '';
@@ -125,6 +127,39 @@ function parseCcgpDate(value: string | null | undefined): Date | undefined {
   if (!match) return undefined;
   const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
   return toDate(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+}
+
+function parseTenderDate(value: string | null | undefined): Date | undefined {
+  const text = normalizeWhitespace(value)
+    .replace(/年|\/|\./g, '-')
+    .replace(/月/g, '-')
+    .replace(/日/g, ' ')
+    .replace(/时|点/g, ':')
+    .replace(/分/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const match = text.match(/(20\d{2})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!match) return undefined;
+  const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
+  return toDate(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`);
+}
+
+function pickTenderDate(text: string, labels: string[]): Date | undefined {
+  for (const label of labels) {
+    const pattern = new RegExp(`${label}(?:为|是)?[：:\\s]*([^\\n；;，,]{0,80})`);
+    const date = parseTenderDate(text.match(pattern)?.[1]);
+    if (date) return date;
+  }
+  return undefined;
+}
+
+function parseBudgetWanLoose(text: string): number | undefined {
+  const yuanLabel = text.match(/(?:预算金额|采购预算|项目预算|最高限价|控制价)(?:（元）|\(元\))?[：:\s￥¥]*([\d,.]+)(?!\s*万)/);
+  if (yuanLabel) {
+    const amount = Number.parseFloat(yuanLabel[1].replace(/,/g, ''));
+    if (Number.isFinite(amount)) return amount >= 10000 ? amount / 10000 : amount;
+  }
+  return parseAmountWan(text) ?? undefined;
 }
 
 function parseUnit(value: string | null | undefined): string {
@@ -336,6 +371,87 @@ function resolveUrl(value: string, baseUrl: string): string {
   }
 }
 
+async function fetchCcgpDetail(url: string, base: SearchResult): Promise<{ content: string; tender: TenderMetadata } | null> {
+  const cached = ccgpDetailCache.get(url);
+  if (cached && Date.now() - cached.fetchedAt < DETAIL_URL_HEALTH_TTL_MS) {
+    return { content: cached.content, tender: cached.tender };
+  }
+
+  try {
+    const response = await axiosWithSourceProxy<string>('ccgp', {
+      method: 'get',
+      url,
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'http://search.ccgp.gov.cn/bxsearch'
+      }
+    });
+
+    const $ = load(response.data);
+    const title = normalizeWhitespace($('meta[name="ArticleTitle"]').attr('content')) || base.title;
+    const detailHtml = $('.vF_detail_content').html()
+      || $('.vF_detail_main').html()
+      || $('.vF_detail').html()
+      || $('body').html()
+      || response.data;
+    const detailText = stripHtml(detailHtml);
+    const extracted = extractTenderDetailFields({
+      ...base,
+      title,
+      content: buildTenderContent([
+        base.content,
+        '--- CCGP 官方详情 ---',
+        detailHtml
+      ])
+    });
+    const looseBudgetWan = parseBudgetWanLoose(detailText);
+    const looseDeadline = pickTenderDate(detailText, [
+      '提交投标文件截止时间',
+      '响应文件提交截止时间',
+      '投标截止时间',
+      '递交截止时间',
+      '截止时间'
+    ]);
+    const looseBidOpenTime = pickTenderDate(detailText, ['开标时间', '开启时间']);
+    const looseProjectCode = detailText.match(/(?:项目编号|招标编号|采购编号)[：:\s]*([A-Za-z0-9\-_/（）()\\[\\]【】]+[A-Za-z0-9）)\\]】])/)?.[1]?.trim();
+    const extractedUnit = extracted.unit && !['信息', '采购人信息', '招标人信息'].includes(extracted.unit)
+      ? extracted.unit
+      : undefined;
+    const mergedTender: TenderMetadata = {
+      ...base.tender,
+      ...extracted,
+      unit: extractedUnit || base.tender?.unit,
+      budgetWan: extracted.budgetWan ?? looseBudgetWan ?? base.tender?.budgetWan,
+      deadline: extracted.deadline ?? looseDeadline ?? base.tender?.deadline,
+      bidOpenTime: extracted.bidOpenTime ?? looseBidOpenTime ?? base.tender?.bidOpenTime,
+      projectCode: extracted.projectCode ?? looseProjectCode ?? base.tender?.projectCode,
+      platform: '中国政府采购网',
+      detailSource: 'ccgp-detail+rules',
+      detailExtractedAt: new Date()
+    };
+    const content = buildTenderContent([
+      base.content,
+      mergedTender.projectCode ? `项目编号：${mergedTender.projectCode}` : null,
+      mergedTender.deadline ? `截止时间：${mergedTender.deadline.toISOString().replace('T', ' ').slice(0, 16)}` : null,
+      mergedTender.bidOpenTime ? `开标时间：${mergedTender.bidOpenTime.toISOString().replace('T', ' ').slice(0, 16)}` : null,
+      mergedTender.contact ? `联系人：${mergedTender.contact}` : null,
+      mergedTender.phone ? `联系电话：${mergedTender.phone}` : null,
+      detailText || null
+    ]);
+
+    ccgpDetailCache.set(url, {
+      content,
+      tender: mergedTender,
+      fetchedAt: Date.now()
+    });
+    return { content, tender: mergedTender };
+  } catch (error) {
+    console.warn('CCGP detail fetch failed:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 export async function searchCebpubservice(query: string, limit = 20): Promise<SearchResult[]> {
   await cebLimiter.wait();
 
@@ -407,9 +523,12 @@ export async function searchCebpubservice(query: string, limit = 20): Promise<Se
           type,
           region: region || undefined,
           budgetWan: amount ?? undefined,
+          deadline: bidOpenTime,
           bidOpenTime,
           noticeType: '招标公告',
-          platform: '中国招标投标公共服务平台'
+          platform: '中国招标投标公共服务平台',
+          detailSource: 'ceb-list+rules',
+          detailExtractedAt: new Date()
         },
         content: buildTenderContent([
           '平台：中国招标投标公共服务平台',
@@ -499,8 +618,7 @@ export async function searchCcgp(query: string, limit = 20): Promise<SearchResul
       const region = rowText.split('|').map(item => item.trim()).filter(Boolean).at(-1);
       const sourceId = url.match(/\/([^/]+)\.htm$/)?.[1];
 
-      seen.add(url);
-      results.push(...toTenderResult({
+      const baseResult = toTenderResult({
         title,
         url,
         source: 'ccgp',
@@ -512,7 +630,9 @@ export async function searchCcgp(query: string, limit = 20): Promise<SearchResul
           unit: unit || undefined,
           budgetWan: amount ?? undefined,
           noticeType,
-          platform: '中国政府采购网'
+          platform: '中国政府采购网',
+          detailSource: 'ccgp-list+rules',
+          detailExtractedAt: new Date()
         },
         content: buildTenderContent([
           '平台：中国政府采购网',
@@ -524,8 +644,19 @@ export async function searchCcgp(query: string, limit = 20): Promise<SearchResul
           amount !== null ? `预算：${amount} 万元` : null,
           content || null
         ])
-      }));
+      })[0];
+
+      if (!baseResult) return;
+      seen.add(url);
+      results.push(baseResult);
     });
+
+    for (const result of results) {
+      const detail = await fetchCcgpDetail(result.url, result);
+      if (!detail) continue;
+      result.content = detail.content;
+      result.tender = detail.tender;
+    }
 
     console.log(`CCGP search for "${query}": found ${results.length} filtered results`);
     return results.slice(0, limit);
@@ -540,12 +671,14 @@ export async function searchGgzyNational(query: string, limit = 20): Promise<Sea
 
   try {
     const params = new URLSearchParams({
-      DEAL_TIME: '06',
+      SOURCE_TYPE: '1',
+      DEAL_TIME: '02',
       DEAL_CLASSIFY: '00',
-      DEAL_STAGE: '0101',
+      DEAL_STAGE: '0000',
       DEAL_PROVINCE: '0',
       DEAL_CITY: '0',
       DEAL_PLATFORM: '0',
+      BID_PLATFORM: '0',
       DEAL_TRADE: '0',
       isShowAll: '1',
       PAGENUMBER: '1',
@@ -565,7 +698,19 @@ export async function searchGgzyNational(query: string, limit = 20): Promise<Sea
       }
     });
 
+    if (response.data.code && response.data.code !== 200) {
+      if (response.data.code === 829) {
+        throw new Error('ggzy captcha required');
+      }
+      throw new Error(`ggzy api code ${response.data.code}`);
+    }
+
     const records = response.data.data?.records ?? [];
+    if (records.length === 0) {
+      console.log(`GGZY National search for "${query}": official API returned empty records`);
+      return [];
+    }
+
     const results = records.flatMap(record => {
       const title = firstStringField(record, ['title', 'TITLE', 'DEAL_TITLE', 'dealTitle', 'PROJECT_NAME', 'projectName']);
       const rawContent = firstStringField(record, ['content', 'CONTENT', 'DEAL_CONTENT', 'description', 'summary']);

@@ -2,7 +2,7 @@ import { prisma } from '../db.js';
 import { analyzeContent, preMatchKeyword } from '../services/ai.js';
 import { recordAIAnalysisLog } from '../services/aiAnalysisLogger.js';
 
-const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'] as const;
+const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'] as const;
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);

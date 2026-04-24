@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const rows = await prisma.hotspot.findMany({
     where: {
       source: {
-        in: ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice']
+        in: ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice']
       }
     },
     orderBy: [

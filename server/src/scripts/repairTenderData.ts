@@ -5,7 +5,7 @@ import {
 } from '../services/tenderDetailEnrichment.js';
 import { extractTenderDetailFields } from '../services/tenderDetailExtractor.js';
 
-const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'] as const;
+const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'] as const;
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
