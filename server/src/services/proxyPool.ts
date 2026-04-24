@@ -103,13 +103,22 @@ function compareProxyHealth(a: ProxyPoolEntry, b: ProxyPoolEntry): number {
   return a.id.localeCompare(b.id);
 }
 
-function pickProxy(sourceId: TenderSourceId): ProxyPoolEntry | null {
+function getProxyAttemptSequence(sourceId: TenderSourceId): Array<ProxyPoolEntry | null> {
   const candidates = getCandidates(sourceId);
-  if (candidates.length === 0) return null;
+  const allowDirectFallback = process.env.TENDER_PROXY_DIRECT_FALLBACK !== 'false';
+
+  if (candidates.length === 0) return [null];
 
   const healthyFirst = [...candidates].sort(compareProxyHealth);
   const available = healthyFirst.filter((entry) => !isCoolingDown(getProxyState(entry.id)));
-  return (available[0] ?? healthyFirst[0]) || null;
+  const cooling = healthyFirst.filter((entry) => isCoolingDown(getProxyState(entry.id)));
+  const sequence: Array<ProxyPoolEntry | null> = [
+    ...available,
+    ...(allowDirectFallback ? [null] : []),
+    ...cooling,
+  ];
+
+  return sequence.length > 0 ? sequence : [null];
 }
 
 function markProxySuccess(proxyId: string): void {
@@ -157,29 +166,34 @@ export async function axiosWithSourceProxyDetailed<T>(
   sourceId: TenderSourceId,
   config: AxiosRequestConfig,
 ): Promise<{ response: AxiosResponse<T>; proxyId?: string }> {
-  const selectedProxy = pickProxy(sourceId);
+  const attempts = getProxyAttemptSequence(sourceId);
+  let lastError: unknown;
 
-  try {
-    const response = await axios.request<T>({
-      ...config,
-      ...(selectedProxy ? { proxy: buildAxiosProxyConfig(selectedProxy) } : {}),
-    });
+  for (const selectedProxy of attempts) {
+    try {
+      const response = await axios.request<T>({
+        ...config,
+        ...(selectedProxy ? { proxy: buildAxiosProxyConfig(selectedProxy) } : { proxy: false }),
+      });
 
-    if (selectedProxy) {
-      markProxySuccess(selectedProxy.id);
+      if (selectedProxy) {
+        markProxySuccess(selectedProxy.id);
+      }
+
+      return {
+        response,
+        proxyId: selectedProxy?.id,
+      };
+    } catch (error) {
+      lastError = error;
+      if (selectedProxy) {
+        const reason = error instanceof Error ? error.message : String(error);
+        markProxyFailure(selectedProxy.id, reason);
+      }
     }
-
-    return {
-      response,
-      proxyId: selectedProxy?.id,
-    };
-  } catch (error) {
-    if (selectedProxy) {
-      const reason = error instanceof Error ? error.message : String(error);
-      markProxyFailure(selectedProxy.id, reason);
-    }
-    throw error;
   }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export function markProxySoftFailure(proxyId: string | undefined, error: string): void {
