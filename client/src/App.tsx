@@ -1017,7 +1017,7 @@ function SourceHealthCard({ summary, themeMode = 'dark' }: { summary: OpsSummary
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源健康</h3>
-          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>直接读取后端探测结果，前端不再猜来源状态。</p>
+          <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>读取最近探测与运行日志，不因打开看板额外触发高风险来源请求。</p>
         </div>
         <div className={cn('rounded-2xl border px-3 py-2 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
           {summary.runtimeConfig.tenderSources.length} / 4 已启用

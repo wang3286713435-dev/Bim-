@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
 import {
+  TENDER_SOURCE_ADAPTERS,
   TENDER_SOURCE_IDS,
+  getTenderSourceRuntimeSnapshot,
   getEnabledTenderSources,
   probeTenderSources,
   searchTenderSourceAcrossQueries,
@@ -323,6 +325,7 @@ router.get('/ops/summary', async (req, res) => {
       latestRun,
       recentRuns,
       recentSourceProbes,
+      latestSourceProbes,
       hotspotQualityRows,
       aiQualityRows,
       recentAiAnalysisLogs,
@@ -360,6 +363,21 @@ router.get('/ops/summary', async (req, res) => {
           ok: true,
           errorMessage: true,
           resultCount: true
+        }
+      }),
+      prisma.sourceProbe.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: {
+          sourceId: true,
+          sourceName: true,
+          ok: true,
+          resultCount: true,
+          elapsedMs: true,
+          sampleTitle: true,
+          sampleUrl: true,
+          errorMessage: true,
+          createdAt: true
         }
       }),
       prisma.hotspot.findMany({
@@ -432,11 +450,40 @@ router.get('/ops/summary', async (req, res) => {
       })
     ]);
 
-    const sourceHealth = await probeTenderSources('BIM', 1);
     const probeFailureSummary24h: Record<string, number> = {};
     const runFailureSummary24h: Record<string, number> = {};
     const failureReasons24h: Record<string, Array<{ reason: string; count: number }>> = {};
     const sourceRunState = new Map<string, { sourceId: string; hasFailure: boolean }>();
+    const latestProbeBySource = new Map<string, (typeof latestSourceProbes)[number]>();
+
+    for (const probe of latestSourceProbes) {
+      if (!latestProbeBySource.has(probe.sourceId)) {
+        latestProbeBySource.set(probe.sourceId, probe);
+      }
+    }
+
+    const enabledSourceIds = new Set(runtimeConfig.tenderSources);
+    const sourceHealth = TENDER_SOURCE_ADAPTERS.map((source) => {
+      const latestProbe = latestProbeBySource.get(source.id);
+      const runtime = getTenderSourceRuntimeSnapshot(source.id);
+      return {
+        id: source.id,
+        name: source.name,
+        enabled: enabledSourceIds.has(source.id),
+        ok: latestProbe?.ok ?? Boolean(runtime.lastSuccessAt && !runtime.circuitOpen),
+        count: latestProbe?.resultCount ?? 0,
+        elapsedMs: latestProbe?.elapsedMs ?? 0,
+        probeQueries: undefined,
+        sampleTitle: latestProbe?.sampleTitle ?? undefined,
+        sampleUrl: latestProbe?.sampleUrl ?? undefined,
+        error: latestProbe?.ok ? undefined : latestProbe?.errorMessage ?? runtime.lastError,
+        failureCount: runtime.failureCount,
+        circuitOpen: runtime.circuitOpen,
+        cooldownRemainingMs: runtime.cooldownRemainingMs,
+        lastSuccessAt: runtime.lastSuccessAt,
+        lastFailureAt: runtime.lastFailureAt
+      };
+    });
 
     function normalizeFailureReason(errorMessage?: string | null, resultCount?: number): string {
       const text = (errorMessage || '').trim();
