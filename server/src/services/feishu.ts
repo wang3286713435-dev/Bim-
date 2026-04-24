@@ -247,10 +247,10 @@ export function isFeishuBitableEnabled(): boolean {
     && !isPlaceholder(process.env.FEISHU_BITABLE_TABLE_ID);
 }
 
-async function sendFeishuWebhookCard(hotspot: FeishuHotspot): Promise<boolean> {
+async function sendFeishuWebhookCard(hotspot: FeishuHotspot, options?: { force?: boolean }): Promise<boolean> {
   const config = getFeishuWebhookConfig();
   if (!config.enabled || !config.webhook) return false;
-  if (!shouldNotifyFeishuWebhook(hotspot)) return false;
+  if (!options?.force && !shouldNotifyFeishuWebhook(hotspot)) return false;
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const sign = config.secret ? buildWebhookSign(config.secret, timestamp) : undefined;
@@ -602,4 +602,8 @@ export async function notifyFeishu(hotspot: FeishuHotspot): Promise<{ webhook: b
     createBitableRecord(hotspot)
   ]);
   return { webhook, bitable };
+}
+
+export async function notifyFeishuWebhook(hotspot: FeishuHotspot, options?: { force?: boolean }): Promise<boolean> {
+  return sendFeishuWebhookCard(hotspot, options);
 }

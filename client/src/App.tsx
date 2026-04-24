@@ -659,13 +659,36 @@ function HotspotDetailPage({
   hotspot,
   isLoading,
   onBack,
+  onNotifyFeishu,
+  isNotifyingFeishu = false,
+  feishuWebhookEnabled = false,
   themeMode = 'dark',
 }: {
   hotspot: Hotspot | null;
   isLoading: boolean;
   onBack: () => void;
+  onNotifyFeishu: (hotspot: Hotspot) => void;
+  isNotifyingFeishu?: boolean;
+  feishuWebhookEnabled?: boolean;
   themeMode?: ThemeMode;
 }) {
+  const [showFloatingBack, setShowFloatingBack] = useState(false);
+
+  useEffect(() => {
+    if (!hotspot) {
+      setShowFloatingBack(false);
+      return;
+    }
+
+    const handleScroll = () => {
+      setShowFloatingBack(window.scrollY > 360);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [hotspot?.id]);
+
   if (!hotspot && !isLoading) return null;
 
   const isLight = themeMode === 'light';
@@ -848,6 +871,24 @@ function HotspotDetailPage({
                   >
                     打开原始公告 <ExternalLink className="h-4 w-4" />
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => onNotifyFeishu(hotspot)}
+                    disabled={!feishuWebhookEnabled || isNotifyingFeishu}
+                    className={cn(
+                      'inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-medium transition',
+                      feishuWebhookEnabled
+                        ? (isLight
+                          ? 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100'
+                          : 'border-cyan-300/20 bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/15')
+                        : (isLight
+                          ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
+                          : 'cursor-not-allowed border-white/8 bg-white/[0.03] text-slate-500')
+                    )}
+                  >
+                    {isNotifyingFeishu ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
+                    {feishuWebhookEnabled ? (isNotifyingFeishu ? '正在推送飞书…' : '手动推送至飞书群') : '飞书群推送未启用'}
+                  </button>
                   <div className={cn(
                     'rounded-2xl border p-4 text-sm leading-6',
                     isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
@@ -860,6 +901,27 @@ function HotspotDetailPage({
           </section>
         </>
       )}
+      <AnimatePresence>
+        {showFloatingBack && (
+          <motion.button
+            type="button"
+            onClick={onBack}
+            initial={{ opacity: 0, scale: 0.86, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.86, y: 12 }}
+            className={cn(
+              'fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full border shadow-[0_18px_42px_rgba(0,0,0,0.28)] backdrop-blur-xl transition hover:scale-105 sm:bottom-8 sm:right-8',
+              isLight
+                ? 'border-cyan-200 bg-white/92 text-cyan-700 hover:bg-cyan-50'
+                : 'border-cyan-300/20 bg-[#07111f]/88 text-cyan-100 hover:bg-cyan-400/12'
+            )}
+            aria-label="返回投标机会清单"
+            title="返回清单"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </section>
   );
 }
@@ -1789,6 +1851,7 @@ function App() {
   const [savedFilterViews, setSavedFilterViews] = useState<SavedFilterView[]>(() => readSavedFilterViews());
   const [opportunityActions, setOpportunityActions] = useState<Record<string, OpportunityAction>>(() => readOpportunityActions());
   const [selectedOpportunityIds, setSelectedOpportunityIds] = useState<string[]>([]);
+  const [pushingFeishuId, setPushingFeishuId] = useState<string | null>(null);
   const [debouncedDashboardSearchText, setDebouncedDashboardSearchText] = useState('');
   const [isSearchDebouncing, setIsSearchDebouncing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -2047,6 +2110,20 @@ function App() {
     setSelectedHotspot(null);
     setIsDetailLoading(false);
   }, []);
+
+  const handleNotifyFeishu = useCallback(async (hotspot: Hotspot) => {
+    setPushingFeishuId(hotspot.id);
+    try {
+      await hotspotsApi.notifyFeishu(hotspot.id);
+      showToast('已推送至飞书群', 'success');
+      refreshOperationalStatus();
+    } catch (error) {
+      console.error('Failed to notify Feishu:', error);
+      showToast(error instanceof Error ? error.message : '推送飞书失败', 'error');
+    } finally {
+      setPushingFeishuId(null);
+    }
+  }, [refreshOperationalStatus, showToast]);
 
   const handleAddKeyword = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -2453,7 +2530,15 @@ function App() {
         </div>
 
         {selectedHotspot && (
-          <HotspotDetailPage hotspot={selectedHotspot} isLoading={isDetailLoading} onBack={handleCloseHotspotDetail} themeMode={themeMode} />
+          <HotspotDetailPage
+            hotspot={selectedHotspot}
+            isLoading={isDetailLoading}
+            onBack={handleCloseHotspotDetail}
+            onNotifyFeishu={handleNotifyFeishu}
+            isNotifyingFeishu={pushingFeishuId === selectedHotspot.id}
+            feishuWebhookEnabled={healthStatus?.integrations.feishuWebhookEnabled || false}
+            themeMode={themeMode}
+          />
         )}
 
         {!selectedHotspot && activeTab === 'opportunities' && (

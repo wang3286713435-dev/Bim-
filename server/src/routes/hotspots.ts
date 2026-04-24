@@ -17,6 +17,7 @@ import {
   getTenderFieldCompletenessScore
 } from '../services/tenderDetailEnrichment.js';
 import { getProxyPoolSnapshot } from '../services/proxyPool.js';
+import { isFeishuWebhookEnabled, notifyFeishuWebhook } from '../services/feishu.js';
 
 const router = Router();
 const TENDER_SOURCES = TENDER_SOURCE_IDS;
@@ -856,6 +857,46 @@ router.post('/detail-enrichment/run', async (req, res) => {
   } catch (error) {
     console.error('Error queueing detail enrichment:', error);
     res.status(500).json({ error: 'Failed to queue detail enrichment' });
+  }
+});
+
+router.post('/:id/notify-feishu', async (req, res) => {
+  try {
+    if (!isFeishuWebhookEnabled()) {
+      return res.status(400).json({ error: 'Feishu webhook is not configured' });
+    }
+
+    const hotspot = await prisma.hotspot.findUnique({
+      where: { id: req.params.id },
+      include: {
+        keyword: {
+          select: { text: true }
+        }
+      }
+    });
+
+    if (!hotspot) {
+      return res.status(404).json({ error: 'Hotspot not found' });
+    }
+
+    const webhook = await notifyFeishuWebhook(hotspot, { force: true });
+    if (!webhook) {
+      return res.status(502).json({ error: 'Failed to send Feishu webhook' });
+    }
+
+    await prisma.notification.create({
+      data: {
+        type: 'feishu',
+        title: `已手动推送飞书: ${hotspot.title.slice(0, 50)}`,
+        content: hotspot.summary || hotspot.title,
+        hotspotId: hotspot.id
+      }
+    });
+
+    res.json({ webhook: true });
+  } catch (error) {
+    console.error('Error manually notifying Feishu:', error);
+    res.status(500).json({ error: 'Failed to notify Feishu' });
   }
 });
 

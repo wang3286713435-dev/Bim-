@@ -405,6 +405,11 @@ export const hotspotsApi = {
       method: 'POST',
       body: JSON.stringify({ limit })
     }),
+
+  notifyFeishu: (id: string) =>
+    request<{ webhook: boolean }>(`/hotspots/${id}/notify-feishu`, {
+      method: 'POST'
+    }),
   
   delete: (id: string) => 
     request<void>(`/hotspots/${id}`, { method: 'DELETE' })
