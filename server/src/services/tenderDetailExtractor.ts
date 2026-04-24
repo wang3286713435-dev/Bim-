@@ -87,8 +87,10 @@ function parseDateCandidate(value: string | null | undefined): Date | undefined 
 
   const match = normalized.match(/(20\d{2}-\d{1,2}-\d{1,2})(?:\s+(\d{1,2}:\d{1,2}(?::\d{1,2})?))?/);
   if (!match) return undefined;
-  const time = match[2] || '00:00:00';
-  const date = new Date(`${match[1]}T${time.length === 5 ? `${time}:00` : time}`);
+  const [year, month, day] = match[1].split('-');
+  const [hour = '00', minute = '00', second = '00'] = (match[2] || '00:00:00').split(':');
+  const dateText = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
+  const date = new Date(dateText);
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
