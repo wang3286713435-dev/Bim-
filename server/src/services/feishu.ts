@@ -154,7 +154,9 @@ function getSourceLabel(source: string): string {
     guangdong: '广东省公共资源交易平台',
     gdebpubservice: '广州公共资源交易公共服务平台',
     gzebpubservice: '广州公共资源交易公共服务平台',
-    szygcgpt: '深圳阳光采购平台'
+    szygcgpt: '深圳阳光采购平台',
+    ccgp: '中国政府采购网',
+    ggzyNational: '全国公共资源交易平台'
   };
   return map[source] || source;
 }

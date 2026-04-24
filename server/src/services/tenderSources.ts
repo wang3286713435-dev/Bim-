@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { AxiosError } from 'axios';
+import { load } from 'cheerio';
 import type { SearchResult } from '../types.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 import { axiosWithSourceProxy, axiosWithSourceProxyDetailed, markProxySoftFailure } from './proxyPool.js';
@@ -22,6 +23,8 @@ const szggzyLimiter = new RateLimiter(1500);
 const gzebLimiter = new RateLimiter(4000);
 const szygcgptLimiter = new RateLimiter(1500);
 const guangdongLimiter = new RateLimiter(5000);
+const ccgpLimiter = new RateLimiter(2500);
+const ggzyNationalLimiter = new RateLimiter(2500);
 
 const EXCLUDE_TITLE = ['材料采购', '监理', '劳务', '设备租赁', '结果公示', '候选人公示', '合同公示', '合同公告', '中标结果', '成交结果', '中选结果', '终止', '失败', '流标', '废标', '投诉', '质疑'];
 const INCLUDE_TITLE = ['BIM', '建筑信息模型', '智慧建造', 'CIM', '数字孪生', '正向设计'];
@@ -99,6 +102,20 @@ function parseDateText(value: string | null | undefined): string {
   return match?.[1] ?? '';
 }
 
+function formatDateForCcgp(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}:${mm}:${dd}`;
+}
+
+function parseCcgpDate(value: string | null | undefined): Date | undefined {
+  const match = normalizeWhitespace(value).match(/(20\d{2})[.-](\d{2})[.-](\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
+  if (!match) return undefined;
+  const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
+  return toDate(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+}
+
 function parseUnit(value: string | null | undefined): string {
   const match = normalizeWhitespace(value).match(/(?:招标单位|建设单位|采购人|招标人)[：:]?\s*([^\n]{2,60})/);
   return match?.[1]?.trim() ?? '';
@@ -108,6 +125,14 @@ function shouldIncludeTender(title: string, content: string): boolean {
   const text = `${title} ${content}`;
   if (EXCLUDE_TITLE.some(keyword => text.includes(keyword))) return false;
   return INCLUDE_TITLE.some(keyword => text.toUpperCase().includes(keyword.toUpperCase()));
+}
+
+function isActiveProcurementNotice(title: string, content: string): boolean {
+  const text = `${title} ${content}`;
+  if (/中标|成交|结果公告|结果公示|候选人公示|合同公告|合同公示|更正|终止|废标|流标|投诉|质疑/.test(text)) {
+    return false;
+  }
+  return /招标公告|采购公告|磋商公告|谈判公告|询价公告|资格预审|比选公告|遴选公告/.test(text);
 }
 
 function isLowValueGzebRecord(title: string, content: string): boolean {
@@ -274,6 +299,208 @@ function toTenderResult(meta: TenderResultMeta): SearchResult[] {
     publishedAt: meta.publishedAt,
     tender: meta.tender
   }];
+}
+
+interface GgzyNationalResponse {
+  code?: number;
+  data?: {
+    records?: Array<Record<string, unknown>>;
+  };
+}
+
+function firstStringField(record: Record<string, unknown>, names: string[]): string {
+  for (const name of names) {
+    const value = record[name];
+    if (typeof value === 'string' && value.trim()) return normalizeWhitespace(value);
+  }
+  return '';
+}
+
+function resolveUrl(value: string, baseUrl: string): string {
+  if (!value) return '';
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return '';
+  }
+}
+
+export async function searchCcgp(query: string, limit = 20): Promise<SearchResult[]> {
+  await ccgpLimiter.wait();
+
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 1);
+
+    const params = new URLSearchParams({
+      searchtype: '1',
+      page_index: '1',
+      bidSort: '0',
+      buyerName: '',
+      projectId: '',
+      pinMu: '0',
+      bidType: '0',
+      dbselect: 'bidx',
+      kw: query,
+      start_time: formatDateForCcgp(startDate),
+      end_time: formatDateForCcgp(endDate),
+      timeType: '6',
+      displayZone: '',
+      zoneId: '',
+      pppStatus: '0',
+      agentName: ''
+    });
+
+    const response = await axiosWithSourceProxy<string>('ccgp', {
+      method: 'get',
+      url: `http://search.ccgp.gov.cn/bxsearch?${params.toString()}`,
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'http://search.ccgp.gov.cn/bxsearch'
+      }
+    });
+
+    const $ = load(response.data);
+    const results: SearchResult[] = [];
+    const seen = new Set<string>();
+
+    $('ul.vT-srch-result-list-bid > li').each((_, element) => {
+      if (results.length >= limit) return false;
+
+      const row = $(element);
+      const link = row.find('a[href*="ccgp.gov.cn/cggg/"]').first();
+      const title = normalizeWhitespace(link.text());
+      const url = resolveUrl(link.attr('href') || '', 'http://www.ccgp.gov.cn/');
+      if (!title || !url || seen.has(url)) return;
+
+      const rowText = normalizeWhitespace(row.text());
+      const content = normalizeWhitespace(rowText.replace(title, ''));
+      if (!shouldIncludeTender(title, content)) return;
+      if (!isActiveProcurementNotice(title, content)) return;
+
+      const type = classifyTenderType(title, content);
+      if (!type) return;
+
+      const amount = parseAmountWan(content);
+      if (amount !== null && amount < 40) return;
+
+      const unit = rowText.match(/采购人[：:]\s*([^|]{2,80})/)?.[1]?.trim();
+      const agent = rowText.match(/代理机构[：:]\s*([^|]{2,80})/)?.[1]?.trim();
+      const noticeType = rowText.match(/(公开招标公告|竞争性磋商公告|竞争性谈判公告|询价公告|资格预审公告|招标公告|采购公告|比选公告|遴选公告)/)?.[1];
+      const dateMatch = rowText.match(/20\d{2}[.-]\d{2}[.-]\d{2}(?:\s+\d{2}:\d{2}:\d{2})?/);
+      const region = rowText.split('|').map(item => item.trim()).filter(Boolean).at(-1);
+      const sourceId = url.match(/\/([^/]+)\.htm$/)?.[1];
+
+      seen.add(url);
+      results.push(...toTenderResult({
+        title,
+        url,
+        source: 'ccgp',
+        sourceId,
+        publishedAt: parseCcgpDate(dateMatch?.[0]),
+        tender: {
+          type,
+          region: region && region.length <= 12 ? region : undefined,
+          unit: unit || undefined,
+          budgetWan: amount ?? undefined,
+          noticeType,
+          platform: '中国政府采购网'
+        },
+        content: buildTenderContent([
+          '平台：中国政府采购网',
+          `分类：${type}`,
+          noticeType ? `公告类型：${noticeType}` : null,
+          region && region.length <= 12 ? `地区：${region}` : null,
+          unit ? `采购人：${unit}` : null,
+          agent ? `代理机构：${agent}` : null,
+          amount !== null ? `预算：${amount} 万元` : null,
+          content || null
+        ])
+      }));
+    });
+
+    console.log(`CCGP search for "${query}": found ${results.length} filtered results`);
+    return results.slice(0, limit);
+  } catch (error) {
+    console.error('CCGP search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+export async function searchGgzyNational(query: string, limit = 20): Promise<SearchResult[]> {
+  await ggzyNationalLimiter.wait();
+
+  try {
+    const params = new URLSearchParams({
+      DEAL_TIME: '06',
+      DEAL_CLASSIFY: '00',
+      DEAL_STAGE: '0101',
+      DEAL_PROVINCE: '0',
+      DEAL_CITY: '0',
+      DEAL_PLATFORM: '0',
+      DEAL_TRADE: '0',
+      isShowAll: '1',
+      PAGENUMBER: '1',
+      FINDTXT: query
+    });
+
+    const response = await axiosWithSourceProxy<GgzyNationalResponse>('ggzyNational', {
+      method: 'post',
+      url: 'https://www.ggzy.gov.cn/information/pubTradingInfo/getTradList',
+      data: params.toString(),
+      timeout: 20000,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'https://www.ggzy.gov.cn/deal/dealList.html'
+      }
+    });
+
+    const records = response.data.data?.records ?? [];
+    const results = records.flatMap(record => {
+      const title = firstStringField(record, ['title', 'TITLE', 'DEAL_TITLE', 'dealTitle', 'PROJECT_NAME', 'projectName']);
+      const rawContent = firstStringField(record, ['content', 'CONTENT', 'DEAL_CONTENT', 'description', 'summary']);
+      const rawUrl = firstStringField(record, ['url', 'URL', 'detailUrl', 'DETAIL_URL', 'linkurl', 'LINKURL']);
+      const url = resolveUrl(rawUrl, 'https://www.ggzy.gov.cn/');
+      if (!title || !url) return [];
+      if (!shouldIncludeTender(title, rawContent)) return [];
+      if (!isActiveProcurementNotice(title, rawContent)) return [];
+
+      const type = classifyTenderType(title, rawContent);
+      if (!type) return [];
+      const amount = parseAmountWan(rawContent);
+      if (amount !== null && amount < 40) return [];
+
+      const sourceId = firstStringField(record, ['id', 'ID', 'uuid', 'UUID']) || url.match(/([^/?#]+)(?:[?#].*)?$/)?.[1];
+      return toTenderResult({
+        title,
+        url,
+        source: 'ggzyNational',
+        sourceId,
+        publishedAt: parseCcgpDate(firstStringField(record, ['time', 'TIME', 'date', 'publishTime', 'PUBLISH_TIME'])),
+        tender: {
+          type,
+          budgetWan: amount ?? undefined,
+          platform: '全国公共资源交易平台'
+        },
+        content: buildTenderContent([
+          '平台：全国公共资源交易平台',
+          `分类：${type}`,
+          amount !== null ? `预算：${amount} 万元` : null,
+          rawContent || null
+        ])
+      });
+    });
+
+    console.log(`GGZY National search for "${query}": found ${results.length} filtered results`);
+    return results.slice(0, limit);
+  } catch (error) {
+    console.error('GGZY National search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
 }
 
 interface ResolvedTenderDetail {

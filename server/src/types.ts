@@ -36,7 +36,9 @@ export interface SearchResult {
     | 'szggzy'
     | 'gzebpubservice'
     | 'szygcgpt'
-    | 'guangdong';
+    | 'guangdong'
+    | 'ccgp'
+    | 'ggzyNational';
   sourceId?: string;
   publishedAt?: Date;
   tender?: TenderMetadata;

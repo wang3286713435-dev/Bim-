@@ -78,6 +78,8 @@ const SOURCE_OPTIONS = [
   { value: 'szygcgpt', label: '深圳阳光采购' },
   { value: 'guangdong', label: '广东交易平台' },
   { value: 'gzebpubservice', label: '广州交易平台' },
+  { value: 'ccgp', label: '中国政府采购网' },
+  { value: 'ggzyNational', label: '全国交易平台' },
 ];
 
 const IMPORTANCE_OPTIONS = [
@@ -145,6 +147,8 @@ const TENDER_PLATFORM_OPTIONS = [
   { value: '深圳阳光采购平台', label: '深圳阳光采购平台' },
   { value: '广东省公共资源交易平台', label: '广东省公共资源交易平台' },
   { value: '广州公共资源交易公共服务平台', label: '广州公共资源交易公共服务平台' },
+  { value: '中国政府采购网', label: '中国政府采购网' },
+  { value: '全国公共资源交易平台', label: '全国公共资源交易平台' },
 ];
 
 function Dropdown({

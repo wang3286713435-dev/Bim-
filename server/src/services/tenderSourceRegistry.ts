@@ -1,5 +1,7 @@
 import type { SearchResult } from '../types.js';
 import {
+  searchCcgp,
+  searchGgzyNational,
   searchGzebpubservice,
   searchGuangdongYgp,
   searchSzggzy,
@@ -7,7 +9,7 @@ import {
 } from './tenderSources.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 
-export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice';
+export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational';
 
 export interface TenderSourceAdapter {
   id: TenderSourceId;
@@ -136,6 +138,26 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     riskLevel: 'high',
     probeProfile: 'layered',
     search: searchGzebpubservice
+  },
+  {
+    id: 'ccgp',
+    name: '中国政府采购网',
+    platform: '中国政府采购网',
+    homepage: 'http://search.ccgp.gov.cn/bxsearch',
+    priority: 5,
+    riskLevel: 'low',
+    probeProfile: 'light',
+    search: searchCcgp
+  },
+  {
+    id: 'ggzyNational',
+    name: '全国公共资源交易平台',
+    platform: '全国公共资源交易平台',
+    homepage: 'https://www.ggzy.gov.cn/deal/dealList.html',
+    priority: 6,
+    riskLevel: 'medium',
+    probeProfile: 'light',
+    search: searchGgzyNational
   }
 ];
 
@@ -146,7 +168,12 @@ export async function getEnabledTenderSources(requestedSources?: string[]): Prom
   const configured = config.tenderSources;
 
   const requested = requestedSources?.length ? requestedSources : configured;
-  const enabled = new Set(requested.filter(source => configured.includes(source as TenderSourceId)));
+  const known = new Set(TENDER_SOURCE_IDS);
+  const enabled = new Set(
+    requestedSources?.length
+      ? requested.filter((source): source is TenderSourceId => known.has(source as TenderSourceId))
+      : requested.filter(source => configured.includes(source as TenderSourceId))
+  );
 
   return TENDER_SOURCE_ADAPTERS.filter(source => enabled.has(source.id));
 }
@@ -189,7 +216,7 @@ function buildProbeQueries(sourceId: TenderSourceId, query: string): string[] {
     variants.add('BIM');
     variants.add('建筑信息模型');
     variants.add('智慧建造');
-  } else if (sourceId === 'szggzy' || sourceId === 'guangdong') {
+  } else if (sourceId === 'szggzy' || sourceId === 'guangdong' || sourceId === 'ccgp' || sourceId === 'ggzyNational') {
     variants.add('BIM');
     variants.add('建筑信息模型');
   } else {

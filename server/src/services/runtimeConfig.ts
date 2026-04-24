@@ -1,7 +1,8 @@
 import { prisma } from '../db.js';
 
-export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice';
-export const TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'];
+export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational';
+export const DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'];
+export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS, 'ccgp', 'ggzyNational'];
 
 export type RuntimeConfig = {
   tenderSources: TenderSourceId[];
@@ -60,7 +61,7 @@ function clampInteger(value: number, min: number, max: number): number {
 export function buildDefaultRuntimeConfig(): RuntimeConfig {
   const configuredSources = parseCsv(process.env.TENDER_SOURCES).filter(source => TENDER_SOURCE_IDS.includes(source as TenderSourceId)) as TenderSourceId[];
   return normalizeRuntimeConfig({
-    tenderSources: configuredSources.length ? configuredSources : TENDER_SOURCE_IDS,
+    tenderSources: configuredSources.length ? configuredSources : DEFAULT_TENDER_SOURCE_IDS,
     maxAgeDays: parseIntSafe(process.env.TENDER_MAX_AGE_DAYS, 365),
     sourceResultLimit: parseIntSafe(process.env.TENDER_SOURCE_RESULT_LIMIT, 8),
     resultsPerKeyword: parseIntSafe(process.env.TENDER_RESULTS_PER_KEYWORD, 8),
@@ -79,7 +80,7 @@ export function buildDefaultRuntimeConfig(): RuntimeConfig {
 
 export function normalizeRuntimeConfig(input: Partial<RuntimeConfig>): RuntimeConfig {
   const defaults = {
-    tenderSources: [...TENDER_SOURCE_IDS],
+    tenderSources: [...DEFAULT_TENDER_SOURCE_IDS],
     maxAgeDays: 365,
     sourceResultLimit: 8,
     resultsPerKeyword: 8,
