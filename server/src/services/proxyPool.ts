@@ -43,7 +43,7 @@ function parseProxyPool(): ProxyPoolEntry[] {
         sources: Array.isArray(entry.sources) && entry.sources.length
           ? entry.sources
               .filter((item): item is TenderSourceId | 'default' =>
-                item === 'default' || ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational'].includes(String(item))
+                item === 'default' || ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'].includes(String(item))
               )
           : ['default'],
       }))

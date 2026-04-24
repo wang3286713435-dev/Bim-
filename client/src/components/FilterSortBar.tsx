@@ -80,6 +80,7 @@ const SOURCE_OPTIONS = [
   { value: 'gzebpubservice', label: '广州交易平台' },
   { value: 'ccgp', label: '中国政府采购网' },
   { value: 'ggzyNational', label: '全国交易平台' },
+  { value: 'cebpubservice', label: '中国招投标服务' },
 ];
 
 const IMPORTANCE_OPTIONS = [
@@ -149,6 +150,7 @@ const TENDER_PLATFORM_OPTIONS = [
   { value: '广州公共资源交易公共服务平台', label: '广州公共资源交易公共服务平台' },
   { value: '中国政府采购网', label: '中国政府采购网' },
   { value: '全国公共资源交易平台', label: '全国公共资源交易平台' },
+  { value: '中国招标投标公共服务平台', label: '中国招标投标公共服务平台' },
 ];
 
 function Dropdown({

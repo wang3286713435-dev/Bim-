@@ -1,8 +1,8 @@
 import { prisma } from '../db.js';
 
-export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational';
+export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational' | 'cebpubservice';
 export const DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'];
-export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS, 'ccgp', 'ggzyNational'];
+export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS, 'ccgp', 'ggzyNational', 'cebpubservice'];
 
 export type RuntimeConfig = {
   tenderSources: TenderSourceId[];
@@ -72,7 +72,7 @@ export function buildDefaultRuntimeConfig(): RuntimeConfig {
     circuitBreakerCooldownMs: parseIntSafe(process.env.TENDER_SOURCE_CIRCUIT_BREAKER_COOLDOWN_MS, 300000),
     guangdongMaxPages: parseIntSafe(process.env.GUANGDONG_MAX_PAGES, 2),
     lowValueExcludeKeywords: parseCsv(process.env.LOW_VALUE_EXCLUDE_KEYWORDS || '中标结果,成交结果,候选人公示,合同公告,失败,终止,流标,废标,投诉,质疑'),
-    lowValueIncludeKeywords: parseCsv(process.env.LOW_VALUE_INCLUDE_KEYWORDS || 'BIM,建筑信息模型,智慧建造,CIM,数字孪生'),
+    lowValueIncludeKeywords: parseCsv(process.env.LOW_VALUE_INCLUDE_KEYWORDS || 'BIM,建筑信息模型,智慧建造,CIM,数字孪生,装配式建筑,工程总承包,EPC,全过程工程咨询,施工模拟,竣工模型交付,管线综合,智慧运维'),
     minRelevanceScore: parseIntSafe(process.env.MIN_RELEVANCE_SCORE, 50),
     strictKeywordMentionScore: parseIntSafe(process.env.STRICT_KEYWORD_MENTION_SCORE, 65)
   });
@@ -91,7 +91,7 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig>): RuntimeCo
     circuitBreakerCooldownMs: 300000,
     guangdongMaxPages: 2,
     lowValueExcludeKeywords: ['中标结果', '成交结果', '候选人公示', '合同公告', '失败', '终止', '流标', '废标', '投诉', '质疑'],
-    lowValueIncludeKeywords: ['BIM', '建筑信息模型', '智慧建造', 'CIM', '数字孪生'],
+    lowValueIncludeKeywords: ['BIM', '建筑信息模型', '智慧建造', 'CIM', '数字孪生', '装配式建筑', '工程总承包', 'EPC', '全过程工程咨询', '施工模拟', '竣工模型交付', '管线综合', '智慧运维'],
     minRelevanceScore: 50,
     strictKeywordMentionScore: 65
   } satisfies RuntimeConfig;

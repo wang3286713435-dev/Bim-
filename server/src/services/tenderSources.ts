@@ -25,9 +25,10 @@ const szygcgptLimiter = new RateLimiter(1500);
 const guangdongLimiter = new RateLimiter(5000);
 const ccgpLimiter = new RateLimiter(2500);
 const ggzyNationalLimiter = new RateLimiter(2500);
+const cebLimiter = new RateLimiter(3500);
 
 const EXCLUDE_TITLE = ['材料采购', '监理', '劳务', '设备租赁', '结果公示', '候选人公示', '合同公示', '合同公告', '中标结果', '成交结果', '中选结果', '终止', '失败', '流标', '废标', '投诉', '质疑'];
-const INCLUDE_TITLE = ['BIM', '建筑信息模型', '智慧建造', 'CIM', '数字孪生', '正向设计'];
+const INCLUDE_TITLE = ['BIM', '建筑信息模型', '智慧建造', 'CIM', '数字孪生', '正向设计', '装配式建筑', '工程总承包', 'EPC', '全过程工程咨询', '施工模拟', '竣工模型交付', '管线综合', '智慧运维'];
 const SHENZHEN_SITE_PREFIXES = ['4403'];
 const SHENZHEN_SITE_NAMES = ['深圳', '福田', '罗湖', '南山', '宝安', '龙岗', '龙华', '坪山', '光明', '盐田', '大鹏', '深汕'];
 const DETAIL_URL_HEALTH_TTL_MS = 6 * 60 * 60 * 1000;
@@ -76,6 +77,16 @@ function getOneYearAgoStart(): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd} 00:00:00`;
+}
+
+function getOneYearAgoDateOnly(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 1);
+  d.setHours(0, 0, 0, 0);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function parseAmountWan(value: string | null | undefined): number | null {
@@ -132,7 +143,7 @@ function isActiveProcurementNotice(title: string, content: string): boolean {
   if (/中标|成交|结果公告|结果公示|候选人公示|合同公告|合同公示|更正|终止|废标|流标|投诉|质疑/.test(text)) {
     return false;
   }
-  return /招标公告|采购公告|磋商公告|谈判公告|询价公告|资格预审|比选公告|遴选公告/.test(text);
+  return /招标公告|采购公告|磋商公告|谈判公告|询价公告|资格预审|比选公告|遴选公告|项目任务/.test(text);
 }
 
 function isLowValueGzebRecord(title: string, content: string): boolean {
@@ -322,6 +333,101 @@ function resolveUrl(value: string, baseUrl: string): string {
     return new URL(value, baseUrl).toString();
   } catch {
     return '';
+  }
+}
+
+export async function searchCebpubservice(query: string, limit = 20): Promise<SearchResult[]> {
+  await cebLimiter.wait();
+
+  try {
+    const params = new URLSearchParams({
+      searchDate: getOneYearAgoDateOnly(),
+      dates: '300',
+      categoryId: '88',
+      industryName: '',
+      area: '',
+      status: '',
+      publishMedia: '',
+      sourceInfo: '',
+      showStatus: '1',
+      word: query,
+      page: '1'
+    });
+
+    const response = await axiosWithSourceProxy<string>('cebpubservice', {
+      method: 'get',
+      url: `https://bulletin.cebpubservice.com/xxfbcmses/search/bulletin.html?${params.toString()}`,
+      timeout: 20000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'https://bulletin.cebpubservice.com/'
+      }
+    });
+
+    const $ = load(response.data);
+    const results: SearchResult[] = [];
+    const seen = new Set<string>();
+
+    $('table.table_text tr').each((_, row) => {
+      if (results.length >= limit) return false;
+
+      const cells = $(row).find('td');
+      if (cells.length < 5) return;
+
+      const titleLink = $(cells[0]).find('a').first();
+      const title = normalizeWhitespace(titleLink.attr('title') || titleLink.text());
+      const href = titleLink.attr('href') || '';
+      const uuid = href.match(/urlOpen\('([^']+)'\)/)?.[1];
+      if (!title || !uuid || seen.has(uuid)) return;
+
+      const industry = normalizeWhitespace($(cells[1]).text());
+      const region = normalizeWhitespace($(cells[2]).text()).replace(/[【】]/g, '');
+      const channel = normalizeWhitespace($(cells[3]).text());
+      const publishedAt = parseCcgpDate(normalizeWhitespace($(cells[4]).text()));
+      const bidOpenTime = parseCcgpDate($(cells[5]).attr('id') || normalizeWhitespace($(cells[5]).text()));
+      const rowText = normalizeWhitespace($(row).text());
+
+      if (!shouldIncludeTender(title, rowText)) return;
+      if (!isActiveProcurementNotice(title, rowText)) return;
+
+      const type = classifyTenderType(title, rowText);
+      if (!type) return;
+
+      const amount = parseAmountWan(rowText);
+      if (amount !== null && amount < 40) return;
+
+      seen.add(uuid);
+      results.push(...toTenderResult({
+        title,
+        url: `https://ctbpsp.com/#/bulletinDetail?uuid=${encodeURIComponent(uuid)}&inpvalue=&dataSource=0&tenderAgency=`,
+        source: 'cebpubservice',
+        sourceId: uuid,
+        publishedAt,
+        tender: {
+          type,
+          region: region || undefined,
+          budgetWan: amount ?? undefined,
+          bidOpenTime,
+          noticeType: '招标公告',
+          platform: '中国招标投标公共服务平台'
+        },
+        content: buildTenderContent([
+          '平台：中国招标投标公共服务平台',
+          `分类：${type}`,
+          industry ? `行业：${industry}` : null,
+          region ? `地区：${region}` : null,
+          channel ? `来源渠道：${channel}` : null,
+          bidOpenTime ? `开标时间：${bidOpenTime.toISOString().replace('T', ' ').slice(0, 16)}` : null,
+          rowText || null
+        ])
+      }));
+    });
+
+    console.log(`CEB PubService search for "${query}": found ${results.length} filtered results`);
+    return results.slice(0, limit);
+  } catch (error) {
+    console.error('CEB PubService search error:', error instanceof Error ? error.message : error);
+    return [];
   }
 }
 

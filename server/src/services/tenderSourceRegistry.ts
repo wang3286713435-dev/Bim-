@@ -1,5 +1,6 @@
 import type { SearchResult } from '../types.js';
 import {
+  searchCebpubservice,
   searchCcgp,
   searchGgzyNational,
   searchGzebpubservice,
@@ -9,7 +10,7 @@ import {
 } from './tenderSources.js';
 import { getRuntimeConfig } from './runtimeConfig.js';
 
-export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational';
+export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational' | 'cebpubservice';
 
 export interface TenderSourceAdapter {
   id: TenderSourceId;
@@ -158,6 +159,16 @@ export const TENDER_SOURCE_ADAPTERS: TenderSourceAdapter[] = [
     riskLevel: 'medium',
     probeProfile: 'light',
     search: searchGgzyNational
+  },
+  {
+    id: 'cebpubservice',
+    name: '中国招标投标公共服务平台',
+    platform: '中国招标投标公共服务平台',
+    homepage: 'https://bulletin.cebpubservice.com/',
+    priority: 7,
+    riskLevel: 'medium',
+    probeProfile: 'standard',
+    search: searchCebpubservice
   }
 ];
 
@@ -216,7 +227,7 @@ function buildProbeQueries(sourceId: TenderSourceId, query: string): string[] {
     variants.add('BIM');
     variants.add('建筑信息模型');
     variants.add('智慧建造');
-  } else if (sourceId === 'szggzy' || sourceId === 'guangdong' || sourceId === 'ccgp' || sourceId === 'ggzyNational') {
+  } else if (sourceId === 'szggzy' || sourceId === 'guangdong' || sourceId === 'ccgp' || sourceId === 'ggzyNational' || sourceId === 'cebpubservice') {
     variants.add('BIM');
     variants.add('建筑信息模型');
   } else {

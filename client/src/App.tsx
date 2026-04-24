@@ -74,7 +74,8 @@ const SOURCE_LABELS: Record<string, string> = {
   guangdong: '广东交易平台',
   gzebpubservice: '广州交易平台',
   ccgp: '中国政府采购网',
-  ggzyNational: '全国交易平台'
+  ggzyNational: '全国交易平台',
+  cebpubservice: '中国招投标服务'
 };
 
 function normalizeTenderPlatform(value: string | null | undefined): string {
