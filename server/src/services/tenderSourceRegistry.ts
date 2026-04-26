@@ -61,6 +61,31 @@ type ProbeCacheEntry = {
 const sourceRuntimeState = new Map<TenderSourceId, SourceRuntimeState>();
 const probeCache = new Map<string, ProbeCacheEntry>();
 const PROBE_CACHE_TTL_MS = Number.parseInt(process.env.TENDER_SOURCE_PROBE_CACHE_TTL_MS || '120000', 10);
+const GGZY_NATIONAL_LAYERED_QUERIES = ['EPC', '工程总承包', '全过程工程咨询'] as const;
+
+function normalizeQueries(queries: string[]): string[] {
+  return [...new Set(queries.map(item => item.trim()).filter(Boolean))];
+}
+
+function isBimFamilyQuery(query: string): boolean {
+  return /(BIM|建筑信息模型|智慧建造|CIM)/i.test(query);
+}
+
+function isGgzyNationalFallbackQuery(query: string): boolean {
+  return /(EPC|工程总承包|全过程工程咨询)/i.test(query);
+}
+
+function buildLayeredQueriesForSource(sourceId: TenderSourceId, queries: string[], mode: 'probe' | 'crawl' = 'crawl'): string[] {
+  const normalized = normalizeQueries(queries);
+  if (sourceId !== 'ggzyNational') return normalized;
+
+  const hasBimFamily = normalized.some(isBimFamilyQuery);
+  const hasFallbackFamily = normalized.some(isGgzyNationalFallbackQuery);
+  if (!hasBimFamily || hasFallbackFamily) return normalized;
+
+  const layered = [...normalized, ...GGZY_NATIONAL_LAYERED_QUERIES];
+  return normalizeQueries(layered).slice(0, mode === 'probe' ? 5 : 4);
+}
 
 function getSourceState(sourceId: TenderSourceId): SourceRuntimeState {
   const existing = sourceRuntimeState.get(sourceId);
@@ -232,6 +257,7 @@ export function classifyTenderSourceStatus(input: {
 }): { status: TenderSourceStatus; statusLabel: string; statusReason?: string } {
   const error = (input.error || '').trim();
   const lower = error.toLowerCase();
+  const isEmptyResult = !error || /empty|空结果|probe empty|returned empty|关键词未返回|暂无样例/i.test(error);
 
   if (!input.enabled) {
     return { status: 'disabled', statusLabel: '未启用', statusReason: '该来源未加入当前生产扫描' };
@@ -240,12 +266,15 @@ export function classifyTenderSourceStatus(input: {
     return { status: 'circuit_open', statusLabel: '熔断中', statusReason: error || '连续失败后进入冷却' };
   }
   if (input.ok) {
+    if ((input.count ?? 0) === 0) {
+      return { status: 'empty', statusLabel: '空结果', statusReason: '请求可达，但当前关键词未返回可用结果' };
+    }
     if (error && /blocked|waf|challenge|403|405|验证码|安全验证|被阻断/i.test(error)) {
       return { status: 'degraded', statusLabel: '降级可用', statusReason: error };
     }
-    return { status: 'healthy', statusLabel: '正常', statusReason: input.count === 0 ? '最近探测成功但暂无样例' : undefined };
+    return { status: 'healthy', statusLabel: '正常' };
   }
-  if (!error || /empty|空结果|probe empty|returned empty/i.test(error)) {
+  if (isEmptyResult) {
     return { status: 'empty', statusLabel: '空结果', statusReason: error || '请求可达，但当前关键词未返回可用结果' };
   }
   if (/blocked|waf|challenge|403|405|forbidden|验证码|安全验证|被阻断/i.test(lower)) {
@@ -269,7 +298,8 @@ function buildProbeQueries(sourceId: TenderSourceId, query: string): string[] {
     variants.add('BIM');
   }
 
-  return [...variants].filter(Boolean).slice(0, sourceId === 'gzebpubservice' ? 4 : 3);
+  const baseQueries = [...variants].filter(Boolean).slice(0, sourceId === 'gzebpubservice' ? 4 : 3);
+  return buildLayeredQueriesForSource(sourceId, baseQueries, 'probe');
 }
 
 export async function searchTenderSourceAcrossQueries(
@@ -283,8 +313,9 @@ export async function searchTenderSourceAcrossQueries(
     throw new Error(`source circuit open: cooldown ${Math.max(0, (state.circuitOpenUntil ?? 0) - Date.now())}ms`);
   }
 
-  const perQueryLimit = Math.max(3, Math.ceil(limit / Math.max(1, queries.length)));
-  const settled = await Promise.allSettled(queries.map(async query => {
+  const effectiveQueries = buildLayeredQueriesForSource(source.id, queries, 'crawl');
+  const perQueryLimit = Math.max(3, Math.ceil(limit / Math.max(1, effectiveQueries.length)));
+  const settled = await Promise.allSettled(effectiveQueries.map(async query => {
     let lastError: unknown;
     for (let attempt = 0; attempt <= config.sourceRetryCount; attempt += 1) {
       try {
@@ -349,9 +380,11 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
     try {
       const aggregated: SearchResult[] = [];
       let lastError: string | undefined;
+      let reachedSource = false;
       for (const probeQuery of probeQueries) {
         try {
           const rows = await source.search(probeQuery, limit);
+          reachedSource = true;
           if (rows.length > 0) {
             aggregated.push(...rows);
             break;
@@ -368,28 +401,32 @@ export async function probeTenderSources(query = 'BIM', limit = 3): Promise<Tend
 
       if (uniqueRows.length > 0) {
         markSourceSuccess(source.id);
+      } else if (reachedSource) {
+        markSourceSuccess(source.id);
       } else if (lastError) {
         markSourceFailure(source.id, lastError);
       }
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
+      const probeOk = uniqueRows.length > 0 || reachedSource;
+      const probeError = probeOk ? undefined : lastError;
       const sourceStatus = classifyTenderSourceStatus({
         enabled,
-        ok: uniqueRows.length > 0,
+        ok: probeOk,
         count: uniqueRows.length,
-        error: uniqueRows.length > 0 ? undefined : lastError,
+        error: probeError,
         circuitOpen: runtime.circuitOpen
       });
       return {
         id: source.id,
         name: source.name,
         enabled,
-        ok: uniqueRows.length > 0,
+        ok: probeOk,
         count: uniqueRows.length,
         elapsedMs: Date.now() - started,
         probeQueries,
         sampleTitle: uniqueRows[0]?.title,
         sampleUrl: uniqueRows[0]?.url,
-        error: uniqueRows.length > 0 ? undefined : lastError,
+        error: probeError,
         failureCount: runtime.failureCount,
         circuitOpen: runtime.circuitOpen,
         cooldownRemainingMs: runtime.cooldownRemainingMs,

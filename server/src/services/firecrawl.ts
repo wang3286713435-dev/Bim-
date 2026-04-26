@@ -1,6 +1,12 @@
 import axios from 'axios';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  cleanTenderContact,
+  cleanTenderPhone,
+  cleanTenderServiceScope,
+  cleanTenderUnit
+} from './tenderFieldQuality.js';
 import type { SearchResult, TenderMetadata } from '../types.js';
 
 const FIRECRAWL_BASE_URL = process.env.FIRECRAWL_BASE_URL || 'https://api.firecrawl.dev';
@@ -73,7 +79,7 @@ export function isFirecrawlEnabled(): boolean {
 }
 
 export function shouldEnrichWithFirecrawl(result: SearchResult): boolean {
-  return ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'].includes(result.source);
+  return ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'].includes(result.source);
 }
 
 function buildCacheKey(url: string, mode: FirecrawlMode): string {
@@ -82,13 +88,13 @@ function buildCacheKey(url: string, mode: FirecrawlMode): string {
 
 function parseNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+    return value > 0 ? value : undefined;
   }
   if (typeof value === 'string') {
     const matched = value.match(/[\d,.]+/);
     if (!matched) return undefined;
     const parsed = Number.parseFloat(matched[0].replace(/,/g, ''));
-    return Number.isFinite(parsed) ? parsed : undefined;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
   }
   return undefined;
 }
@@ -116,6 +122,10 @@ function normalizeString(value: unknown, maxLength = 600): string | undefined {
   return normalized ? normalized.slice(0, maxLength) : undefined;
 }
 
+function isBlockedOrChallengePage(markdown: string): boolean {
+  return /request has been blocked|potential threats|405\.png|Punish-Type|_waf_|验证码|滑块|安全验证|访问被阻断|VAPTCHA|captcha/i.test(markdown);
+}
+
 function parseDetailExtraction(payload: Record<string, unknown> | undefined): FirecrawlDetailExtraction | null {
   if (!payload) return null;
 
@@ -124,16 +134,16 @@ function parseDetailExtraction(payload: Record<string, unknown> | undefined): Fi
     : undefined;
 
   const extracted: FirecrawlDetailExtraction = {
-    unit: normalizeString(payload.unit, 120),
+    unit: cleanTenderUnit(payload.unit) ?? undefined,
     budgetWan: parseNumber(payload.budgetWan),
     deadline: parseDate(payload.deadline),
     projectCode: normalizeString(payload.projectCode, 120),
-    contact: normalizeString(payload.contact, 60),
-    phone: normalizeString(payload.phone, 60),
+    contact: cleanTenderContact(payload.contact) ?? undefined,
+    phone: cleanTenderPhone(payload.phone) ?? undefined,
     email: normalizeString(payload.email, 120),
     bidOpenTime: parseDate(payload.bidOpenTime),
     docDeadline: parseDate(payload.docDeadline),
-    serviceScope: normalizeString(payload.serviceScope, 1000),
+    serviceScope: cleanTenderServiceScope(payload.serviceScope) ?? undefined,
     qualification: normalizeString(payload.qualification, 1000),
     address: normalizeString(payload.address, 240),
     detailSource: 'firecrawl-detail-json',
@@ -195,6 +205,10 @@ export async function scrapeWithFirecrawl(url: string, options: FirecrawlScrapeO
 
     const markdown = response.data.data?.markdown?.trim();
     if (!markdown) return null;
+    if (isBlockedOrChallengePage(markdown)) {
+      console.warn('Firecrawl scrape returned challenge page:', url);
+      return null;
+    }
 
     const normalized = markdown.slice(0, isDetailMode ? 14000 : 6000);
     memoryCache.set(cacheKey, {
@@ -279,6 +293,10 @@ export async function scrapeTenderDetailWithFirecrawl(url: string): Promise<Fire
 
     const jsonData = response.data.data?.json;
     const detailMarkdown = response.data.data?.markdown?.trim() || markdown;
+    if (!detailMarkdown || isBlockedOrChallengePage(detailMarkdown)) {
+      console.warn('Firecrawl detail scrape returned challenge page:', url);
+      return { markdown: null, extracted: null };
+    }
     const extracted = parseDetailExtraction(jsonData);
     return {
       markdown: detailMarkdown ? detailMarkdown.slice(0, 16000) : null,

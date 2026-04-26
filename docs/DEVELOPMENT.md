@@ -992,3 +992,90 @@ v1.4 今日收口重点是把“新增数据源”从代码接入升级成可验
    - 每个来源输出 `deepCrawlStrategy`，区分规则补强、官方详情、浏览器会话和 WAF 降级。
 
 v1.4 TODO 已全部收口。仍未强行解决的是 `cebpubservice` 的真实 SPA 详情字段抓取，因为该接口触发 WAF/JS challenge；本版本已完成安全降级与后续浏览器会话策略，不在生产定时扫描中暴力重试。
+
+## 42. v1.5 CEB 单源专项启动（2026-04-24）
+
+本轮开始进入 v1.5，目标不是继续横向扩新源，而是先把中国招标投标公共服务平台 `cebpubservice` 做稳。
+
+已验证现状：
+
+1. 官方列表页 `https://bulletin.cebpubservice.com/xxfbcmses/search/bulletin.html` 能稳定返回公开 HTML 表格。
+2. 列表页可直接解析标题、UUID、行业、地区、来源渠道、发布时间和开标时间。
+3. SPA 详情页 `https://ctbpsp.com/#/bulletinDetail` 的真实接口 `/cutominfoapi/bulletin/{uuid}/uid/0` 当前返回阿里云 WAF/JS challenge。
+4. Firecrawl scrape 对同一详情页也返回 405 风控页，不能作为 CEB 详情补强的默认生产方案。
+5. 翻页请求需要 VAPTCHA 请求头，生产扫描暂不做自动验证码绕过，继续通过关键词分层扩大列表覆盖。
+
+本次代码调整：
+
+1. CEB 发布时间优先取列表首列 `td[id]` 的完整时间，例如 `2026-04-17 17:14:04`。
+2. 公告类型由标题推断，覆盖公开招标、竞争性磋商、竞争性谈判、询比采购、比选、采购公告、项目任务等。
+3. 开标时间继续作为截止参考，同时输出 `公告状态：未截止 / 已开标/已截止`。
+4. 从标题清洗 `tenderServiceScope`，在详情不可用时也能展示项目服务范围。
+5. 字段来源标记升级为 `ceb-list+official-table:v1.5`，前端和飞书均识别为“官方列表可信”。
+6. 新增 `npm --prefix server run probe:cebpubservice -- --query=BIM --limit=5`，用于单源专项诊断。
+7. 新增 `npm --prefix server run backfill:cebpubservice -- --apply`，用于线上旧 CEB 记录字段回填。
+
+后续策略：
+
+1. 在服务器数据库执行历史数据回填，把旧 CEB 记录补齐公告类型、服务范围和详情来源。
+2. 再做 CEB 治理面板专项指标：列表字段覆盖、详情 WAF 次数、有效样本数。
+3. 详情正文补强已按原四源方案接回详情增强队列：先 Firecrawl/来源详情能力，低完整度再交给 OpenClaw `bim-tender` agent 逐条核验 URL 和正文；被 WAF/验证码阻断时不猜测字段，保留列表字段。
+
+
+## 43. v1.5 CEB 接回原详情增强队列（2026-04-24）
+
+本次按历史文档第 17/18 节修正 v1.5 实现：新源不应只做列表降级，而要复用原四源“少量候选公告逐条进入详情页补字段”的链路。
+
+确认到的旧方案：
+
+1. 列表页先抓取候选公告。
+2. 规则过滤和去重后，对剩余少量公告访问详情页。
+3. 优先使用来源详情接口或 Firecrawl 渲染正文。
+4. 首轮规则字段提取后，如果完整度仍低，进入二段 Agent 化详情增强。
+5. 字段回写 `Hotspot` 表，前端投标机会清单和详情页直接使用结构化字段。
+
+本次修正：
+
+1. `shouldEnrichWithFirecrawl` 扩展到 `ccgp / ggzyNational / cebpubservice`，新源也会进入详情页正文增强。
+2. `enqueueIncompleteHotspots` 的来源范围从原四源扩展为七个招采来源，手动详情增强不再漏掉新源。
+2.1 `POST /api/hotspots/detail-enrichment/run` 支持传 `source`，可以只补跑 `cebpubservice`，适合单平台专项治理。
+3. 新增 `server/src/services/tenderDetailAgent.ts`，低完整度公告会把 URL、当前字段和已抓取正文交给 OpenClaw `bim-tender` agent。
+4. Agent 提示词明确要求：如果可用浏览器/网页工具，优先打开详情页并等待渲染；若遇到 WAF、验证码、登录或空壳页，返回 blocked/not_found，不得猜测字段。
+5. Firecrawl 抓取增加 WAF/验证码/安全挑战页识别，避免 CEB 的 405 风控页被拼入公告正文。
+6. 前端和飞书已识别 `detail-enrichment+openclaw-browser` 为“深抓取详情”。
+
+这样 CEB 当前策略变为：官方列表字段保底 + 详情增强队列逐条尝试 Firecrawl/浏览器 agent 补字段 + WAF 时明确降级。
+
+新增运维命令：
+
+1. `npm --prefix server run enrich:source-details -- --source=cebpubservice --limit=20`：只补跑 CEB 详情增强。
+2. `npm --prefix server run enrich:source-details -- --source=ccgp --limit=20`：后续套到中国政府采购网。
+3. `npm --prefix server run enrich:source-details -- --source=ggzyNational --limit=20`：后续套到全国公共资源交易平台。
+
+
+## 44. v1.5 CEB 真实样本入库与脏字段清理（2026-04-24）
+
+本轮围绕 CEB 跑了 3 条本地真实入库样本，用于前端验收。
+
+发现的问题：
+
+1. CEB 详情页和 Firecrawl 均返回 WAF/405 阻断页。
+2. Firecrawl 结构化 JSON 在阻断页场景下可能返回无证据字段，出现 `单位=万元`、`预算=0` 等脏值。
+3. OpenClaw/Agent 在没有真实详情证据时也可能输出示例型字段，例如 `项目编号=123456`、`联系人=张先生`、`地址=北京市朝阳区`，必须过滤。
+
+已修复：
+
+1. Firecrawl detail 如果 markdown 为空或命中 WAF/验证码/405 阻断页，直接返回空增强结果，不接受 JSON 字段。
+2. Firecrawl 字段解析不再接受 `budgetWan <= 0`，且过滤 `万元 / 元 / 信息` 等弱单位。
+3. CEB 官方列表降级态只保留列表可证明字段：标题、地区、公告类型、发布时间、开标/截止参考、服务范围、详情来源。
+4. `backfill:cebpubservice` 会清理 CEB 旧样本中的阻断页内容和疑似幻觉字段。
+
+当前本地 3 条 CEB 样本覆盖：
+
+1. 截止/开标：3/3。
+2. 服务范围：3/3。
+3. 详情来源：3/3，均为 `ceb-list+official-table:v1.5`。
+4. 单位、预算、联系人、电话：0/3，原因是详情页被 WAF 阻断，列表页不提供这些字段。
+5. 平均字段完整度：34。
+
+结论：CEB 当前已经可以作为“列表可信线索源”展示，但还不是“详情字段完整源”。下一步前端验收通过后，再继续研究真实浏览器会话/已验证 cookie/人工授权会话是否能突破详情页；在此之前禁止用无证据字段填充前端。

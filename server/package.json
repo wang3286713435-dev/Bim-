@@ -1,6 +1,6 @@
 {
   "name": "yupi-hot-monitor-server",
-  "version": "1.4.0",
+  "version": "1.5.4",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -19,7 +19,12 @@
     "probe:openclaw-analysis": "tsx src/scripts/probeOpenClawAnalysis.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "probe:tender-source-candidate": "tsx src/scripts/probeTenderSourceCandidate.ts"
+    "probe:tender-source-candidate": "tsx src/scripts/probeTenderSourceCandidate.ts",
+    "probe:cebpubservice": "tsx src/scripts/probeCebpubservice.ts",
+    "probe:ceb-detail-session": "tsx src/scripts/probeCebDetailSession.ts",
+    "backfill:cebpubservice": "tsx src/scripts/backfillCebpubserviceFields.ts",
+    "enrich:source-details": "tsx src/scripts/enrichTenderSourceDetails.ts",
+    "ingest:source-samples": "tsx src/scripts/ingestTenderSourceSamples.ts"
   },
   "keywords": [],
   "author": "",

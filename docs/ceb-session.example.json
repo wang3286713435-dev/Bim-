@@ -1,0 +1,8 @@
+{
+  "cookie": "acw_tc=...; JSESSIONID=...; other_cookie=...",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+  "referer": "https://ctbpsp.com/#/bulletinDetail?uuid=YOUR_UUID&inpvalue=&dataSource=0&tenderAgency=",
+  "extraHeaders": {
+    "X-Requested-With": "XMLHttpRequest"
+  }
+}

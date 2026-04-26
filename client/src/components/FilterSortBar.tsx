@@ -12,6 +12,7 @@ export interface FilterState {
   searchMode: 'title' | 'fulltext';
   includeExpired: 'true' | 'false';
   source: string;
+  tenderStage: string;
   importance: string;
   keywordId: string;
   timeRange: string;
@@ -36,6 +37,7 @@ export const defaultFilterState: FilterState = {
   searchMode: 'fulltext',
   includeExpired: 'true',
   source: '',
+  tenderStage: '',
   importance: '',
   keywordId: '',
   timeRange: '',
@@ -89,6 +91,18 @@ const IMPORTANCE_OPTIONS = [
   { value: 'high', label: '🟠 高', color: 'text-orange-400' },
   { value: 'medium', label: '🟡 中', color: 'text-amber-400' },
   { value: 'low', label: '🟢 低', color: 'text-emerald-400' },
+];
+
+const TENDER_STAGE_OPTIONS = [
+  { value: '', label: '全部阶段' },
+  { value: 'actionable', label: '可跟进公告' },
+  { value: 'formal_notice', label: '正式公告' },
+  { value: 'prequalification_notice', label: '资格预审' },
+  { value: 'change_notice', label: '变更补遗' },
+  { value: 'pre-signal', label: '前置信号' },
+  { value: 'procurement_intent', label: '采购意向' },
+  { value: 'tender_plan', label: '招标计划' },
+  { value: 'closed', label: '结果 / 合同' },
 ];
 
 const TIME_RANGE_OPTIONS = [
@@ -256,6 +270,7 @@ export default function FilterSortBar({
 
   const activeFilterCount = [
     filters.source,
+    filters.tenderStage,
     filters.searchText,
     filters.includeExpired === 'false' ? 'exclude-expired' : '',
     filters.importance,
@@ -415,6 +430,7 @@ export default function FilterSortBar({
         {activeFilterCount > 0 && !showFilters && (
           <div className="flex flex-wrap items-center gap-1.5">
             {filters.source && <FilterTag label={SOURCE_OPTIONS.find((o) => o.value === filters.source)?.label || filters.source} onRemove={() => update('source', '')} />}
+            {filters.tenderStage && <FilterTag label={TENDER_STAGE_OPTIONS.find((o) => o.value === filters.tenderStage)?.label || filters.tenderStage} onRemove={() => update('tenderStage', '')} />}
             {filters.includeExpired === 'false' && <FilterTag label="已隐藏已截止" onRemove={() => update('includeExpired', 'true')} />}
             {filters.importance && <FilterTag label={IMPORTANCE_OPTIONS.find((o) => o.value === filters.importance)?.label || filters.importance} onRemove={() => update('importance', '')} />}
             {filters.keywordId && <FilterTag label={keywords.find((k) => k.id === filters.keywordId)?.text || '关键词'} onRemove={() => update('keywordId', '')} />}
@@ -514,6 +530,7 @@ export default function FilterSortBar({
           >
             <div className={cn('flex flex-wrap items-center gap-2 rounded-xl p-3', isLight ? 'border border-slate-200 bg-white/80 shadow-[0_12px_40px_rgba(15,23,42,0.08)]' : 'border border-white/5 bg-white/[0.02]')}>
               <Dropdown label="来源" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} themeMode={themeMode} />
+              <Dropdown label="公告阶段" value={filters.tenderStage} options={TENDER_STAGE_OPTIONS} onChange={(v) => update('tenderStage', v)} themeMode={themeMode} />
               <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} themeMode={themeMode} />
               <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} themeMode={themeMode} />
               <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} themeMode={themeMode} />

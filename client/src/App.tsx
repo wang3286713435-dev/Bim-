@@ -246,6 +246,28 @@ function getSourceStatusTone(status: string | undefined, ok: boolean, circuitOpe
   return getHealthTone(ok, circuitOpen);
 }
 
+function getProxyStatusTone(status: string | undefined, probeOk: boolean): string {
+  if (probeOk || status === 'healthy') return 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20';
+  if (status === 'untested') return 'text-slate-300 bg-slate-500/10 border-slate-400/20';
+  if (status === 'auth_required' || status === 'tunnel_unreachable') return 'text-red-300 bg-red-500/10 border-red-400/20';
+  if (status === 'upstream_blocked') return 'text-orange-200 bg-orange-500/10 border-orange-400/20';
+  if (status === 'timeout' || status === 'gateway_502' || status === 'connection_reset' || status === 'http_error' || status === 'request_failed') {
+    return 'text-amber-200 bg-amber-500/10 border-amber-400/20';
+  }
+  return 'text-red-300 bg-red-500/10 border-red-400/20';
+}
+
+function formatProxySources(sources: string[]): string {
+  if (!sources.length) return '未绑定来源';
+  return sources.map((item) => item === 'default' ? '默认池' : getSourceLabel(item)).join(' / ');
+}
+
+function getProxyAlertTone(severity: 'healthy' | 'warning' | 'critical', themeMode: ThemeMode): string {
+  if (severity === 'critical') return getBadgeTone('text-red-200 bg-red-500/10 border-red-400/20', themeMode);
+  if (severity === 'warning') return getBadgeTone('text-amber-200 bg-amber-500/10 border-amber-400/20', themeMode);
+  return getBadgeTone('text-emerald-200 bg-emerald-500/10 border-emerald-400/20', themeMode);
+}
+
 function getSourceQualityMeta(grade: string | undefined, score: number): { label: string; tone: string } {
   if (grade === 'no_sample') return { label: '暂无样本', tone: 'text-slate-300 bg-slate-500/10 border-slate-400/20' };
   if (grade === 'good' || score >= 70) return { label: '质量较高', tone: 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20' };
@@ -400,13 +422,26 @@ function getDeadlineInfo(deadline: string | null): { label: string; tone: string
   };
 }
 
-function getNoticeStage(noticeType: string | null): { label: string; tone: string } {
-  const text = noticeType || '未标注公告类型';
-  if (text.includes('招标') || text.includes('资格预审')) return { label: text, tone: 'border-cyan-400/25 bg-cyan-500/12 text-cyan-100' };
-  if (text.includes('采购') || text.includes('竞价')) return { label: text, tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100' };
-  if (text.includes('变更') || text.includes('补充')) return { label: text, tone: 'border-amber-300/25 bg-amber-400/12 text-amber-100' };
-  if (text.includes('结果') || text.includes('中标') || text.includes('成交')) return { label: text, tone: 'border-slate-400/15 bg-slate-500/10 text-slate-300' };
-  return { label: text, tone: 'border-white/10 bg-white/5 text-slate-300' };
+function getNoticeStage(
+  hotspot: Pick<Hotspot, 'tenderStageCategory' | 'tenderStageLabel' | 'tenderStageBucket' | 'tenderNoticeType'>
+): { label: string; tone: string } {
+  const label = hotspot.tenderStageLabel || hotspot.tenderNoticeType || '待判定';
+
+  switch (hotspot.tenderStageBucket) {
+    case 'actionable':
+      if (hotspot.tenderStageCategory === 'prequalification_notice') {
+        return { label, tone: 'border-sky-400/25 bg-sky-500/12 text-sky-100' };
+      }
+      return { label, tone: 'border-cyan-400/25 bg-cyan-500/12 text-cyan-100' };
+    case 'pre-signal':
+      return { label, tone: 'border-amber-300/25 bg-amber-400/12 text-amber-100' };
+    case 'change':
+      return { label, tone: 'border-orange-300/25 bg-orange-400/12 text-orange-100' };
+    case 'closed':
+      return { label, tone: 'border-slate-400/15 bg-slate-500/10 text-slate-300' };
+    default:
+      return { label, tone: 'border-white/10 bg-white/5 text-slate-300' };
+  }
 }
 
 function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDetailSource'>): { label: string; tone: string } {
@@ -417,11 +452,14 @@ function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDe
   if (url.includes('show-bid-opening/list') || /中标|成交|结果公告|候选人公示/.test(title)) {
     return { label: '低可信结果页', tone: 'border-rose-400/25 bg-rose-500/12 text-rose-200' };
   }
-  if (source.includes('firecrawl-detail-json') || source.includes('detail-enrichment+agent-firecrawl')) {
+  if (source.includes('firecrawl-detail-json') || source.includes('detail-enrichment+agent-firecrawl') || source.includes('detail-enrichment+openclaw-browser')) {
     return { label: '深抓取详情', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
   }
   if (source.includes('szggzy-api+rules') || source.includes('source-detail+rules') || source.includes('detail-enrichment')) {
     return { label: '官方详情已解析', tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' };
+  }
+  if (source.includes('ceb-list+official-table')) {
+    return { label: '官方列表可信', tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200' };
   }
   if (url.includes('szggzy.com/globalSearch/details.html') || url.includes('nodeId=') || url.includes('detailTop') || /gzebpubservice\.cn\/jyfw\//.test(url)) {
     return { label: '原始详情已校验', tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200' };
@@ -430,6 +468,13 @@ function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDe
 }
 
 function getBidAction(hotspot: Hotspot): string {
+  if (hotspot.tenderStageBucket === 'pre-signal') {
+    return hotspot.tenderStageCategory === 'procurement_intent'
+      ? '跟踪正式采购公告'
+      : '跟踪正式招标公告';
+  }
+  if (hotspot.tenderStageBucket === 'closed') return '归档历史样本';
+  if (hotspot.tenderStageBucket === 'change') return '核对变更对报名与投标窗口的影响';
   const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
   if (deadline.urgency === 'expired') return '归档观察';
   if (deadline.urgency === 'urgent') return '立即核对投标窗口';
@@ -440,6 +485,15 @@ function getBidAction(hotspot: Hotspot): string {
 }
 
 function getOpportunityRank(hotspot: Hotspot): { label: string; tone: string } {
+  if (hotspot.tenderStageBucket === 'pre-signal') {
+    return { label: '前置信号', tone: 'border-amber-300/25 bg-amber-400/12 text-amber-100' };
+  }
+  if (hotspot.tenderStageBucket === 'change') {
+    return { label: '变更跟踪', tone: 'border-orange-300/25 bg-orange-400/12 text-orange-100' };
+  }
+  if (hotspot.tenderStageBucket === 'closed') {
+    return { label: '归档信息', tone: 'border-slate-400/15 bg-slate-500/10 text-slate-300' };
+  }
   const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
   const hasBusinessFields = Boolean(hotspot.tenderUnit || hotspot.tenderBudgetWan || getEffectiveDeadline(hotspot));
   if (deadline.urgency === 'urgent' && hotspot.relevance >= 70) {
@@ -480,6 +534,32 @@ function getFollowUpRecommendation(hotspot: Hotspot): {
   tone: string;
   summary: string;
 } {
+  if (hotspot.tenderStageBucket === 'pre-signal') {
+    return {
+      label: '持续跟踪',
+      tone: 'border-amber-300/25 bg-amber-400/12 text-amber-100',
+      summary: hotspot.tenderStageCategory === 'procurement_intent'
+        ? '当前更适合作为采购意向线索，建议等待正式公告后再进入投标评估。'
+        : '当前更适合作为招标计划线索，建议跟踪后续正式公告与资格条件。'
+    };
+  }
+
+  if (hotspot.tenderStageBucket === 'closed') {
+    return {
+      label: '归档观察',
+      tone: 'border-slate-400/15 bg-slate-500/10 text-slate-300',
+      summary: '当前属于结果或合同阶段，不进入优先跟进，可留作历史样本和客户线索。'
+    };
+  }
+
+  if (hotspot.tenderStageBucket === 'change') {
+    return {
+      label: '核对变更',
+      tone: 'border-orange-300/25 bg-orange-400/12 text-orange-100',
+      summary: '该项目已进入变更或补遗阶段，建议先核对截止时间、文件范围和报名条件是否变化。'
+    };
+  }
+
   const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
   const completeness = getFieldCompleteness(hotspot);
 
@@ -718,7 +798,7 @@ function HotspotDetailPage({
 
   const isLight = themeMode === 'light';
   const deadline = hotspot ? getDeadlineInfo(getEffectiveDeadline(hotspot)) : null;
-  const stage = hotspot ? getNoticeStage(hotspot.tenderNoticeType) : null;
+  const stage = hotspot ? getNoticeStage(hotspot) : null;
   const detailReliability = hotspot ? getDetailReliability(hotspot) : null;
   const region = hotspot ? [hotspot.tenderRegion, hotspot.tenderCity].filter(Boolean).join(' / ') || '未标注' : '载入中';
   const published = hotspot?.publishedAt ? formatDateTime(hotspot.publishedAt) : '未披露';
@@ -969,7 +1049,7 @@ function HotspotCard({
   action?: OpportunityAction;
 }) {
   const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
-  const stage = getNoticeStage(hotspot.tenderNoticeType);
+  const stage = getNoticeStage(hotspot);
   const detailReliability = getDetailReliability(hotspot);
   const rank = getOpportunityRank(hotspot);
   const region = [hotspot.tenderRegion, hotspot.tenderCity].filter(Boolean).join(' / ') || '未标注';
@@ -1854,6 +1934,8 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
   const totalProbeFailures = summary ? Object.values(summary.probeFailureSummary24h || summary.failureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
   const totalRunFailures = summary ? Object.values(summary.runFailureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
   const proxyPool = summary?.proxyPool || [];
+  const proxyAlerts = summary?.proxyAlerts || [];
+  const healthyProxyCount = proxyPool.filter((item) => item.probeOk).length;
   const topFailureReasons = summary
     ? Object.entries(summary.failureReasons24h || {})
         .flatMap(([sourceId, items]) => items.map((item) => ({ sourceId, ...item })))
@@ -1948,17 +2030,186 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
         </div>
       )}
 
+      {proxyAlerts.length > 0 && (
+        <div className={cn(
+          'mt-3 rounded-[20px] border p-4 text-xs leading-6',
+          isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-300'
+        )}>
+          <p className="mb-3 font-medium">代理告警</p>
+          <div className="space-y-2.5">
+            {proxyAlerts.map((item) => (
+              <div key={`${item.id}-${item.category}`} className={cn(
+                'rounded-[16px] border px-3 py-3',
+                isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#0f1425]'
+              )}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.id}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{item.detail}</p>
+                    {item.thresholdTriggered && item.consecutiveFailureStreak != null && item.alertThreshold != null && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        连续异常 {item.consecutiveFailureStreak}/{item.alertThreshold}
+                        {item.thresholdTriggeredAt ? ` · ${relativeTime(item.thresholdTriggeredAt)} 触发` : ''}
+                      </p>
+                    )}
+                  </div>
+                  <span className={cn('shrink-0 rounded-full border px-2.5 py-1 text-[11px]', getProxyAlertTone(item.severity, themeMode))}>
+                    {item.label}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className={cn(
         'mt-3 rounded-[20px] border p-4 text-xs leading-6',
         isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
       )}>
-        <p className="mb-2 font-medium">出口池</p>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="font-medium">代理池</p>
+          <span className={cn(
+            'rounded-full border px-2.5 py-1',
+            getBadgeTone(healthyProxyCount === proxyPool.length && proxyPool.length > 0
+              ? 'text-emerald-200 bg-emerald-500/10 border-emerald-400/20'
+              : healthyProxyCount > 0
+                ? 'text-amber-200 bg-amber-500/10 border-amber-400/20'
+                : 'text-red-200 bg-red-500/10 border-red-400/20', themeMode)
+          )}>
+            {proxyPool.length > 0 ? `${healthyProxyCount}/${proxyPool.length} 健康` : '未配置'}
+          </span>
+        </div>
         {proxyPool.length > 0 ? (
-          <div className="space-y-1.5">
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))]">
             {proxyPool.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-3">
-                <span>{item.id} · {item.host}:{item.port}</span>
-                <span>{item.failureCount > 0 ? `失败 ${item.failureCount}` : '可用'}</span>
+              <div
+                key={item.id}
+                className={cn(
+                  'min-w-0 rounded-[18px] border p-4',
+                  isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#0f1425]'
+                )}
+              >
+                <div className="flex flex-col gap-3">
+                  <div className="min-w-0">
+                    <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.id}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{item.host}:{item.port}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={cn('whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px]', getBadgeTone(getProxyStatusTone(item.probeStatus, item.probeOk), themeMode))}>
+                      {item.probeStatusLabel}
+                    </span>
+                    {item.thresholdTriggered && (
+                      <span className={cn(
+                        'whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px]',
+                        getBadgeTone('border-red-400/20 bg-red-500/10 text-red-200', themeMode)
+                      )}>
+                        连续异常已越线
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className={cn('mt-4 grid gap-2.5 text-[12px]', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>出口 IP</span>
+                    <span className={cn('min-w-0 text-right break-words', isLight ? 'text-slate-900' : 'text-white')}>{item.publicIp || '未返回'}</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>隧道状态</span>
+                    <span className="min-w-0 text-right break-words">{item.tunnelStatusLabel || '待探测'}{item.tunnelLatencyMs != null ? ` · ${item.tunnelLatencyMs} ms` : ''}</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>主动探测</span>
+                    <span className="min-w-0 text-right break-words">
+                      {item.lastProbeAt ? `${relativeTime(item.lastProbeAt)}${item.lastProbeLatencyMs != null ? ` · ${item.lastProbeLatencyMs} ms` : ''}` : '暂无'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>当前路由</span>
+                    <span className="min-w-0 text-right break-words">{item.routingModeLabel}</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>实战成功</span>
+                    <span className="min-w-0 text-right break-words">{item.lastSuccessAt ? relativeTime(item.lastSuccessAt) : '暂无'}</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>失败统计</span>
+                    <span className="min-w-0 text-right break-words">硬失败 {item.failureCount} 次 · 软失败 {item.softFailureCount} 次</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>连续失败</span>
+                    <span className="min-w-0 text-right break-words">{item.consecutiveFailures} 次</span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>同类连续异常</span>
+                    <span className="min-w-0 text-right break-words">
+                      {item.consecutiveFailureStreak}/{item.alertThreshold}
+                      {item.consecutiveFailureLabel ? ` · ${item.consecutiveFailureLabel}` : ''}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
+                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>适用来源</span>
+                    <span className="min-w-0 text-right leading-5 break-words">{formatProxySources(item.sources)}</span>
+                  </div>
+                </div>
+
+                {item.thresholdTriggered && (
+                  <p className={cn(
+                    'mt-3 rounded-xl border px-3 py-2 text-[11px] leading-5',
+                    isLight ? 'border-red-200 bg-red-50 text-red-700' : 'border-red-400/15 bg-red-500/10 text-red-200'
+                  )}>
+                    连续 {item.consecutiveFailureStreak} 次 {item.consecutiveFailureLabel || item.probeStatusLabel} 已达到阈值 {item.alertThreshold}
+                    {item.thresholdTriggeredAt ? ` · ${relativeTime(item.thresholdTriggeredAt)} 触发告警` : ''}
+                  </p>
+                )}
+
+                {item.coolingDown && (
+                  <p className={cn(
+                    'mt-3 rounded-xl border px-3 py-2 text-[11px] leading-5',
+                    isLight ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-amber-400/15 bg-amber-500/10 text-amber-200'
+                  )}>
+                    熔断冷却中，剩余约 {Math.ceil(item.cooldownRemainingMs / 1000)} 秒
+                  </p>
+                )}
+
+                {item.lastProbeError && (
+                  <p
+                    className={cn(
+                      'mt-3 rounded-xl border px-3 py-2 text-[11px] leading-5',
+                      isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
+                    )}
+                    title={item.lastProbeAt ? `${formatDateTime(item.lastProbeAt)} · ${item.probeUrl || '未记录探测地址'}` : item.probeUrl || undefined}
+                  >
+                    主动探测：{item.lastProbeError}
+                    {item.lastProbeStatusCode ? ` · HTTP ${item.lastProbeStatusCode}` : ''}
+                  </p>
+                )}
+
+                {item.lastFailureLabel && (
+                  <p
+                    className={cn(
+                      'mt-2 rounded-xl border px-3 py-2 text-[11px] leading-5',
+                      isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
+                    )}
+                    title={item.lastFailureAt ? formatDateTime(item.lastFailureAt) : undefined}
+                  >
+                    最近失败分类：{item.lastFailureLabel}
+                    {item.lastFailureSeverity ? ` · ${item.lastFailureSeverity === 'hard' ? '硬故障' : item.lastFailureSeverity === 'degraded' ? '降级故障' : '软故障'}` : ''}
+                  </p>
+                )}
+
+                {item.lastError && (
+                  <p
+                    className={cn(
+                      'mt-2 rounded-xl border px-3 py-2 text-[11px] leading-5',
+                      isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
+                    )}
+                    title={item.lastFailureAt ? formatDateTime(item.lastFailureAt) : undefined}
+                  >
+                    抓取链路最近错误：{item.lastError}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -2077,6 +2328,7 @@ function App() {
     if (dashboardFilters.searchMode) params.searchMode = dashboardFilters.searchMode;
     if (dashboardFilters.includeExpired) params.includeExpired = dashboardFilters.includeExpired;
     if (dashboardFilters.source) params.source = dashboardFilters.source;
+    if (dashboardFilters.tenderStage) params.tenderStage = dashboardFilters.tenderStage;
     if (dashboardFilters.importance) params.importance = dashboardFilters.importance;
     if (dashboardFilters.keywordId) params.keywordId = dashboardFilters.keywordId;
     if (dashboardFilters.timeRange) params.timeRange = dashboardFilters.timeRange;
@@ -2323,6 +2575,12 @@ function App() {
       results = results.filter(item => getDeadlineInfo(getEffectiveDeadline(item)).urgency !== 'expired');
     }
     if (searchFilters.source) results = results.filter(item => item.source === searchFilters.source);
+    if (searchFilters.tenderStage) {
+      results = results.filter((item) => (
+        item.tenderStageCategory === searchFilters.tenderStage
+        || item.tenderStageBucket === searchFilters.tenderStage
+      ));
+    }
     if (searchFilters.importance) results = results.filter(item => item.importance === searchFilters.importance);
     if (searchFilters.keywordId) results = results.filter(item => item.keyword?.id === searchFilters.keywordId);
     if (searchFilters.isReal === 'true') results = results.filter(item => item.isReal);
@@ -2428,6 +2686,7 @@ function App() {
   }, [stats]);
   const highValueHotspots = useMemo(() => {
     return [...analyticsHotspots]
+      .filter(item => item.tenderActionable)
       .filter(item => getDeadlineInfo(getEffectiveDeadline(item)).urgency !== 'expired')
       .sort((a, b) => {
         const scoreA = (a.importance === 'urgent' ? 300 : a.importance === 'high' ? 200 : a.importance === 'medium' ? 100 : 0)
@@ -2455,6 +2714,7 @@ function App() {
       return Number.isFinite(deadline) && deadline >= now && deadline <= sevenDays;
     }).length;
     const activeOpportunity = analyticsHotspots.filter(item => {
+      if (!item.tenderActionable) return false;
       const effective = getEffectiveDeadline(item);
       if (!effective) return true;
       const deadline = new Date(effective).getTime();
@@ -2724,13 +2984,14 @@ function App() {
                 <div className="mb-5 flex items-center justify-between gap-3">
                   <div>
                     <h3 className={cn('text-lg font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>优先跟进</h3>
-                    <p className={cn('mt-1 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>按截止、预算、单位和业务匹配度排序。</p>
+                    <p className={cn('mt-1 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>仅保留正式公告 / 资格预审 / 变更补遗，按截止、预算、单位和匹配度排序。</p>
                   </div>
                   <Flame className="h-5 w-5 text-orange-300" />
                 </div>
                 <div className="space-y-3">
                   {highValueHotspots.map(item => {
                     const deadline = getDeadlineInfo(getEffectiveDeadline(item));
+                    const stage = getNoticeStage(item);
                     return (
                       <button
                         key={item.id}
@@ -2747,6 +3008,7 @@ function App() {
                             <p className={cn('text-sm font-medium leading-6', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{item.title}</p>
                             <p className="mt-2 text-xs text-slate-500">{item.tenderUnit || '单位待补全'}</p>
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                              <span className={cn('rounded-full border px-2 py-1', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>
                               <span className={cn('rounded-full border px-2 py-1', themeMode === 'light' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>{item.tenderRegion || item.tenderCity || '未标注地区'}</span>
                               <span className={cn('rounded-full border px-2 py-1', themeMode === 'light' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>{formatBudget(item.tenderBudgetWan)}</span>
                               <span className={cn('rounded-full border px-2 py-1', deadline.tone)}>{deadline.label}</span>
@@ -2814,7 +3076,7 @@ function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-3 sm:min-w-[18rem]">
                     <div className={cn('rounded-[24px] border p-4', themeMode === 'light' ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.05]')}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">来源命中</p>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">来源可达</p>
                       <p className={cn('mt-2 text-2xl font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{opsSummary?.sourceHealth.filter(item => item.ok).length ?? 0}/{opsSummary?.sourceHealth.length ?? 0}</p>
                     </div>
                     <div className={cn('rounded-[24px] border p-4', themeMode === 'light' ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.05]')}>

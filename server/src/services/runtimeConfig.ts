@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 export type TenderSourceId = 'szggzy' | 'szygcgpt' | 'guangdong' | 'gzebpubservice' | 'ccgp' | 'ggzyNational' | 'cebpubservice';
 export const DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'];
 export const TENDER_SOURCE_IDS: TenderSourceId[] = [...DEFAULT_TENDER_SOURCE_IDS];
+const LEGACY_DEFAULT_TENDER_SOURCE_IDS: TenderSourceId[] = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice'];
 
 export type RuntimeConfig = {
   tenderSources: TenderSourceId[];
@@ -58,10 +59,26 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function normalizeTenderSourceIds(sources: TenderSourceId[]): TenderSourceId[] {
+  return [...new Set(sources.filter(source => TENDER_SOURCE_IDS.includes(source)))];
+}
+
+function shouldUpgradeLegacyDefaultSources(sources: TenderSourceId[]): boolean {
+  const normalized = normalizeTenderSourceIds(sources);
+  return normalized.length === LEGACY_DEFAULT_TENDER_SOURCE_IDS.length
+    && normalized.every((source, index) => source === LEGACY_DEFAULT_TENDER_SOURCE_IDS[index]);
+}
+
+function upgradeLegacyDefaultSources(sources: TenderSourceId[]): TenderSourceId[] {
+  return shouldUpgradeLegacyDefaultSources(sources)
+    ? [...DEFAULT_TENDER_SOURCE_IDS]
+    : normalizeTenderSourceIds(sources);
+}
+
 export function buildDefaultRuntimeConfig(): RuntimeConfig {
   const configuredSources = parseCsv(process.env.TENDER_SOURCES).filter(source => TENDER_SOURCE_IDS.includes(source as TenderSourceId)) as TenderSourceId[];
   return normalizeRuntimeConfig({
-    tenderSources: configuredSources.length ? configuredSources : DEFAULT_TENDER_SOURCE_IDS,
+    tenderSources: configuredSources.length ? upgradeLegacyDefaultSources(configuredSources) : DEFAULT_TENDER_SOURCE_IDS,
     maxAgeDays: parseIntSafe(process.env.TENDER_MAX_AGE_DAYS, 365),
     sourceResultLimit: parseIntSafe(process.env.TENDER_SOURCE_RESULT_LIMIT, 8),
     resultsPerKeyword: parseIntSafe(process.env.TENDER_RESULTS_PER_KEYWORD, 8),
@@ -96,8 +113,7 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig>): RuntimeCo
     strictKeywordMentionScore: 65
   } satisfies RuntimeConfig;
 
-  const tenderSources = (input.tenderSources ?? defaults.tenderSources)
-    .filter(source => TENDER_SOURCE_IDS.includes(source as TenderSourceId)) as TenderSourceId[];
+  const tenderSources = normalizeTenderSourceIds((input.tenderSources ?? defaults.tenderSources) as TenderSourceId[]);
 
   return {
     tenderSources: tenderSources.length ? [...new Set(tenderSources)] : defaults.tenderSources,
@@ -151,7 +167,7 @@ export async function getRuntimeConfig(forceRefresh = false): Promise<RuntimeCon
 
   const configuredSources = parseCsv(map.TENDER_SOURCES).filter(source => TENDER_SOURCE_IDS.includes(source as TenderSourceId)) as TenderSourceId[];
   const config = normalizeRuntimeConfig({
-    tenderSources: configuredSources.length ? configuredSources : defaults.tenderSources,
+    tenderSources: configuredSources.length ? upgradeLegacyDefaultSources(configuredSources) : defaults.tenderSources,
     maxAgeDays: parseIntSafe(map.TENDER_MAX_AGE_DAYS, defaults.maxAgeDays),
     sourceResultLimit: parseIntSafe(map.TENDER_SOURCE_RESULT_LIMIT, defaults.sourceResultLimit),
     resultsPerKeyword: parseIntSafe(map.TENDER_RESULTS_PER_KEYWORD, defaults.resultsPerKeyword),
@@ -177,13 +193,29 @@ export async function getRuntimeConfig(forceRefresh = false): Promise<RuntimeCon
 
 export async function ensureRuntimeConfigSettings(): Promise<void> {
   const defaults = runtimeConfigToSettings(buildDefaultRuntimeConfig());
+  const existing = await prisma.setting.findMany({
+    where: { key: { in: [...RUNTIME_SETTING_KEYS] } }
+  });
+  const existingMap = new Map(existing.map(item => [item.key, item.value]));
 
   for (const [key, value] of Object.entries(defaults)) {
-    await prisma.setting.upsert({
-      where: { key },
-      update: {},
-      create: { key, value }
-    });
+    const currentValue = existingMap.get(key);
+    if (!currentValue) {
+      await prisma.setting.create({
+        data: { key, value }
+      });
+      continue;
+    }
+
+    if (key === 'TENDER_SOURCES') {
+      const currentSources = parseCsv(currentValue).filter(source => TENDER_SOURCE_IDS.includes(source as TenderSourceId)) as TenderSourceId[];
+      if (shouldUpgradeLegacyDefaultSources(currentSources)) {
+        await prisma.setting.update({
+          where: { key },
+          data: { value }
+        });
+      }
+    }
   }
 
   clearRuntimeConfigCache();

@@ -4,8 +4,15 @@ import {
   getDetailEnrichmentQueueState,
 } from '../services/tenderDetailEnrichment.js';
 import { extractTenderDetailFields } from '../services/tenderDetailExtractor.js';
+import {
+  cleanTenderContact,
+  cleanTenderPhone,
+  cleanTenderUnit,
+} from '../services/tenderFieldQuality.js';
 
 const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'] as const;
+const STATUS_NOISE_PATTERN = /开标情况|开标记录|开标信息|开标直播|评标情况|评标结果|定标结果/;
+const CONTRACT_DISCLOSURE_PATTERN = /合同公开信息|合同信息公开/;
 
 function hasFlag(flag: string): boolean {
   return process.argv.includes(flag);
@@ -34,7 +41,52 @@ function sanitizeTenderUnit(value: string | null | undefined): string | null {
     ?.trim()
     .replace(/[：:\s]+$/, '');
   if (!cleaned || isDirtyStructuredText(cleaned)) return null;
-  return cleaned;
+  return cleanTenderUnit(cleaned);
+}
+
+function isStatusNoiseText(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return STATUS_NOISE_PATTERN.test(value);
+}
+
+function isContractDisclosureText(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return CONTRACT_DISCLOSURE_PATTERN.test(value);
+}
+
+function isRemovableLowValueHotspot(hotspot: {
+  source: string;
+  title: string;
+  content: string;
+}): boolean {
+  if (isContractDisclosureText(hotspot.title) || isContractDisclosureText(hotspot.content)) {
+    return true;
+  }
+  if (hotspot.source === 'szggzy' && hotspot.content.includes('合同签订基本信息公示表')) {
+    return true;
+  }
+  if (isStatusNoiseText(hotspot.title)) {
+    return true;
+  }
+  return hotspot.source === 'gzebpubservice'
+    && (
+      hotspot.title.includes('中标')
+      || hotspot.title.includes('成交结果')
+      || hotspot.content.includes('中标（成交）结果详情')
+    );
+}
+
+function shouldResetSuspiciousPhone(hotspot: {
+  source: string;
+  url: string;
+  tenderContact: string | null;
+  tenderPhone: string | null;
+}): boolean {
+  if (!hotspot.tenderPhone) return false;
+  if (hotspot.source !== 'guangdong') return false;
+  if (!hotspot.url.includes('ygp.gdzwfw.gov.cn')) return false;
+  if (hotspot.tenderContact) return false;
+  return true;
 }
 
 function isMalformedTenderUrl(url: string, source: string): boolean {
@@ -70,6 +122,7 @@ async function main(): Promise<void> {
       || isWeakTenderUnit(hotspot.tenderUnit)
       || isDirtyStructuredText(hotspot.tenderContact)
       || isDirtyStructuredText(hotspot.tenderPhone)
+      || shouldResetSuspiciousPhone(hotspot)
     )
     .map((hotspot) => {
       const extracted = extractTenderDetailFields({
@@ -104,11 +157,11 @@ async function main(): Promise<void> {
             ? (sanitizeTenderUnit(extracted.unit) ?? sanitizeTenderUnit(hotspot.tenderUnit))
             : hotspot.tenderUnit,
           tenderContact: isDirtyStructuredText(hotspot.tenderContact)
-            ? (extracted.contact ?? null)
+            ? (cleanTenderContact(extracted.contact) ?? null)
             : hotspot.tenderContact,
           tenderPhone: isDirtyStructuredText(hotspot.tenderPhone)
-            ? (extracted.phone ?? null)
-            : hotspot.tenderPhone,
+            ? (cleanTenderPhone(extracted.phone) ?? null)
+            : (shouldResetSuspiciousPhone(hotspot) ? null : hotspot.tenderPhone),
         },
       };
     });
@@ -123,19 +176,21 @@ async function main(): Promise<void> {
     }));
 
   const removableLowValueRows = hotspots
-    .filter((hotspot) =>
-      hotspot.source === 'gzebpubservice'
-      && (
-        hotspot.title.includes('中标')
-        || hotspot.title.includes('成交结果')
-        || hotspot.content.includes('中标（成交）结果详情')
-      )
-    )
+    .filter((hotspot) => isRemovableLowValueHotspot(hotspot))
     .map((hotspot) => ({
       id: hotspot.id,
       source: hotspot.source,
       title: hotspot.title,
       url: hotspot.url,
+    }));
+
+  const suspiciousPhoneRows = hotspots
+    .filter((hotspot) => shouldResetSuspiciousPhone(hotspot))
+    .map((hotspot) => ({
+      id: hotspot.id,
+      source: hotspot.source,
+      title: hotspot.title,
+      phone: hotspot.tenderPhone,
     }));
 
   const legacyRows = purgeLegacy
@@ -157,6 +212,7 @@ async function main(): Promise<void> {
     dirtyFieldRepairs: dirtyFieldRepairs.length,
     malformedUrlRows: malformedUrlRows.length,
     removableLowValueRows: removableLowValueRows.length,
+    suspiciousPhoneRows: suspiciousPhoneRows.length,
     legacyRows: legacyRows.length,
     apply,
     purgeLegacy,
@@ -169,6 +225,7 @@ async function main(): Promise<void> {
       dirtyFieldRepairs: dirtyFieldRepairs.slice(0, 10),
       malformedUrlRows: malformedUrlRows.slice(0, 10),
       removableLowValueRows: removableLowValueRows.slice(0, 10),
+      suspiciousPhoneRows: suspiciousPhoneRows.slice(0, 10),
       legacyRows: legacyRows.slice(0, 10),
     }, null, 2));
     return;

@@ -19,6 +19,7 @@ import { ensureDefaultSettings } from './startup/defaultSettings.js';
 import { getRuntimeConfig } from './services/runtimeConfig.js';
 import { getDetailEnrichmentQueueState } from './services/tenderDetailEnrichment.js';
 import { isFeishuBitableEnabled, isFeishuWebhookEnabled } from './services/feishu.js';
+import { getProxyHealthRefreshIntervalMs, hasEnabledProxyPool, refreshProxyPoolHealth } from './services/proxyPool.js';
 
 dotenv.config();
 
@@ -149,6 +150,17 @@ httpServer.listen(PORT, async () => {
   try {
     await ensureDefaultSettings();
     await ensureDefaultKeywords();
+    if (hasEnabledProxyPool()) {
+      await refreshProxyPoolHealth(true).catch((error) => {
+        console.warn('Failed to initialize proxy pool health:', error instanceof Error ? error.message : error);
+      });
+      const proxyHealthTimer = setInterval(() => {
+        void refreshProxyPoolHealth().catch((error) => {
+          console.warn('Failed to refresh proxy pool health:', error instanceof Error ? error.message : error);
+        });
+      }, getProxyHealthRefreshIntervalMs());
+      proxyHealthTimer.unref();
+    }
   } catch (error) {
     console.error('❌ Failed to initialize default BIM runtime:', error);
   }

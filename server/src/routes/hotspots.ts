@@ -17,7 +17,17 @@ import {
   getDetailEnrichmentQueueState,
   getTenderFieldCompletenessScore
 } from '../services/tenderDetailEnrichment.js';
-import { getProxyPoolSnapshot } from '../services/proxyPool.js';
+import {
+  classifyTenderDetailSource,
+  getTenderDirtyIssues,
+  isUsableBudgetWan,
+  isUsableTenderContact,
+  isUsableTenderPhone,
+  isUsableTenderServiceScope,
+  isUsableTenderUnit
+} from '../services/tenderFieldQuality.js';
+import { classifyTenderStage } from '../services/tenderStage.js';
+import { getProxyPoolSnapshot, refreshProxyPoolHealth } from '../services/proxyPool.js';
 import { isFeishuWebhookEnabled, notifyFeishuWebhook } from '../services/feishu.js';
 
 const router = Router();
@@ -79,38 +89,6 @@ function getEffectiveDeadlineTime(item: {
   return null;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function getTenderDirtyIssues(item: {
-  tenderUnit?: string | null;
-  tenderBudgetWan?: number | null;
-  tenderContact?: string | null;
-  tenderPhone?: string | null;
-  tenderDetailSource?: string | null;
-}): string[] {
-  const issues: string[] = [];
-  const unit = normalizeText(item.tenderUnit);
-  const phone = normalizeText(item.tenderPhone);
-  const detailSource = normalizeText(item.tenderDetailSource);
-
-  if (unit && (unit.length > 80 || /(项目名称|预算金额|采购需求概况|联系人|联系电话|联系地址|招标代理机构)[:：]/.test(unit))) {
-    issues.push('单位字段疑似污染');
-  }
-  if (item.tenderBudgetWan != null && (!Number.isFinite(item.tenderBudgetWan) || item.tenderBudgetWan <= 0 || item.tenderBudgetWan > 1_000_000)) {
-    issues.push('预算金额疑似异常');
-  }
-  if (phone && !/(\d{3,4}-?\d{7,8}|1[3-9]\d{9})/.test(phone)) {
-    issues.push('联系电话疑似异常');
-  }
-  if (/blocked|waf|challenge|404|bad-link|unhealthy/i.test(detailSource)) {
-    issues.push('详情链路可信度低');
-  }
-
-  return issues;
-}
-
 function buildRepairHints(input: {
   total: number;
   missingCounts: Record<string, number>;
@@ -124,6 +102,8 @@ function buildRepairHints(input: {
     budget: '预算金额',
     deadline: '截止/开标时间',
     contact: '联系人',
+    phone: '联系电话',
+    serviceScope: '服务范围',
     detail: '详情解析'
   };
 
@@ -157,9 +137,9 @@ function getSourceDeepCrawlStrategy(sourceId: string): { mode: string; enabled: 
       note: '官方列表接口已修正参数和字段映射；详情字段仍需非空样本继续验证'
     },
     cebpubservice: {
-      mode: 'browser-session-required',
-      enabled: false,
-      note: '列表稳定，详情 API 触发 WAF/JS challenge，生产默认降级'
+      mode: 'official-list+browser-agent',
+      enabled: true,
+      note: 'v1.5 已纳入详情增强队列：Firecrawl/浏览器 agent 逐条补字段；WAF 时保留官方列表字段'
     }
   };
 
@@ -185,6 +165,38 @@ function getSourceProxyPolicy(sourceId: string, proxyPool: ReturnType<typeof get
   };
 }
 
+function decorateHotspotRecord<T extends {
+  tenderNoticeType?: string | null;
+  title?: string | null;
+  content?: string | null;
+}>(record: T) {
+  const stage = classifyTenderStage({
+    tenderNoticeType: record.tenderNoticeType,
+    title: record.title,
+    content: record.content
+  });
+
+  return {
+    ...record,
+    tenderStageCategory: stage.category,
+    tenderStageLabel: stage.label,
+    tenderStageBucket: stage.bucket,
+    tenderActionable: stage.actionable
+  };
+}
+
+function matchesTenderStageFilter(
+  record: Parameters<typeof decorateHotspotRecord>[0],
+  tenderStageFilter: string
+): boolean {
+  if (!tenderStageFilter) return true;
+  const decorated = decorateHotspotRecord(record);
+  return (
+    decorated.tenderStageCategory === tenderStageFilter
+    || decorated.tenderStageBucket === tenderStageFilter
+  );
+}
+
 // 获取所有热点
 router.get('/', async (req, res) => {
   try {
@@ -198,6 +210,7 @@ router.get('/', async (req, res) => {
       importance,
       keywordId,
       isReal,
+      tenderStage,
       timeRange,
       timeFrom,
       timeTo,
@@ -235,6 +248,7 @@ router.get('/', async (req, res) => {
     const tenderTypeValue = getQueryString(tenderType);
     const tenderRegionValue = getQueryString(tenderRegion);
     const tenderPlatformValue = getQueryString(tenderPlatform);
+    const tenderStageValue = getQueryString(tenderStage);
     const searchTextValue = getQueryString(searchText);
     const searchModeValue = getQueryString(searchMode) === 'title' ? 'title' : 'fulltext';
     const minBudgetWan = getQueryNumber(tenderMinBudgetWan);
@@ -373,7 +387,7 @@ router.get('/', async (req, res) => {
     }
 
     const excludeExpired = getQueryString(includeExpired) === 'false';
-    const shouldFetchAll = needsMemorySort || excludeExpired;
+    const shouldFetchAll = needsMemorySort || excludeExpired || Boolean(tenderStageValue);
 
     const rawHotspots = await prisma.hotspot.findMany({
       where,
@@ -386,12 +400,18 @@ router.get('/', async (req, res) => {
       }
     });
 
-    const filteredRawHotspots = excludeExpired
-      ? rawHotspots.filter((item) => {
-          const deadline = getEffectiveDeadlineTime(item);
-          return deadline == null || deadline >= Date.now();
-        })
-      : rawHotspots;
+    const filteredRawHotspots = rawHotspots.filter((item) => {
+      if (excludeExpired) {
+        const deadline = getEffectiveDeadlineTime(item);
+        if (deadline != null && deadline < Date.now()) return false;
+      }
+
+      if (tenderStageValue && !matchesTenderStageFilter(item, tenderStageValue)) {
+        return false;
+      }
+
+      return true;
+    });
 
     let hotspots;
     if (shouldFetchAll) {
@@ -404,7 +424,7 @@ router.get('/', async (req, res) => {
     const total = shouldFetchAll ? filteredRawHotspots.length : await prisma.hotspot.count({ where });
 
     res.json({
-      data: hotspots,
+      data: hotspots.map((item) => decorateHotspotRecord(item)),
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -463,6 +483,9 @@ router.get('/stats', async (req, res) => {
 // 获取后端运行概览，供后续监控台前端使用
 router.get('/ops/summary', async (req, res) => {
   try {
+    await refreshProxyPoolHealth().catch((error) => {
+      console.warn('Failed to refresh proxy pool health:', error instanceof Error ? error.message : error);
+    });
     const runtimeConfig = await getRuntimeConfig();
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
@@ -603,21 +626,44 @@ router.get('/ops/summary', async (req, res) => {
     const failureReasons24h: Record<string, Array<{ reason: string; count: number }>> = {};
     const sourceRunState = new Map<string, { sourceId: string; hasFailure: boolean }>();
     const latestProbeBySource = new Map<string, (typeof latestSourceProbes)[number]>();
+    const latestNonEmptyProbeBySource = new Map<string, (typeof latestSourceProbes)[number]>();
+
+    function isEmptySourceProbe(probe?: { ok?: boolean; resultCount?: number | null; errorMessage?: string | null }): boolean {
+      if (!probe || (probe.resultCount ?? 0) !== 0) return false;
+      const errorText = (probe.errorMessage || '').trim();
+      return !errorText || /empty|空结果|probe empty|returned empty|关键词未返回/i.test(errorText);
+    }
+
+    function isOperationalProbeFailure(probe: { ok: boolean; resultCount?: number | null; errorMessage?: string | null }): boolean {
+      return !probe.ok && !isEmptySourceProbe(probe);
+    }
 
     for (const probe of latestSourceProbes) {
       if (!latestProbeBySource.has(probe.sourceId)) {
         latestProbeBySource.set(probe.sourceId, probe);
+      }
+      if (!latestNonEmptyProbeBySource.has(probe.sourceId) && probe.ok && probe.resultCount > 0) {
+        latestNonEmptyProbeBySource.set(probe.sourceId, probe);
       }
     }
 
     const enabledSourceIds = new Set(runtimeConfig.tenderSources);
     const sourceHealth = TENDER_SOURCE_ADAPTERS.map((source) => {
       const latestProbe = latestProbeBySource.get(source.id);
+      const latestProbeIsFailure = latestProbe ? isOperationalProbeFailure(latestProbe) : false;
+      const healthProbe = latestProbeIsFailure
+        ? latestProbe
+        : latestNonEmptyProbeBySource.get(source.id) ?? latestProbe;
       const runtime = getTenderSourceRuntimeSnapshot(source.id);
       const enabled = enabledSourceIds.has(source.id);
-      const ok = enabled ? latestProbe?.ok ?? Boolean(runtime.lastSuccessAt && !runtime.circuitOpen) : false;
-      const count = enabled ? latestProbe?.resultCount ?? 0 : 0;
-      const error = enabled ? latestProbe?.ok ? undefined : latestProbe?.errorMessage ?? runtime.lastError : 'source disabled';
+      const latestProbeIsEmpty = isEmptySourceProbe(latestProbe);
+      const ok = enabled
+        ? Boolean(!latestProbeIsFailure && (healthProbe?.ok || latestProbeIsEmpty || runtime.lastSuccessAt) && !runtime.circuitOpen)
+        : false;
+      const count = enabled ? healthProbe?.resultCount ?? 0 : 0;
+      const error = enabled
+        ? latestProbeIsFailure ? latestProbe?.errorMessage ?? runtime.lastError : undefined
+        : 'source disabled';
       const sourceStatus = classifyTenderSourceStatus({
         enabled,
         ok,
@@ -632,10 +678,10 @@ router.get('/ops/summary', async (req, res) => {
         ok,
         ...sourceStatus,
         count,
-        elapsedMs: enabled ? latestProbe?.elapsedMs ?? 0 : 0,
+        elapsedMs: enabled ? healthProbe?.elapsedMs ?? 0 : 0,
         probeQueries: undefined,
-        sampleTitle: enabled ? latestProbe?.sampleTitle ?? undefined : undefined,
-        sampleUrl: enabled ? latestProbe?.sampleUrl ?? undefined : undefined,
+        sampleTitle: enabled ? healthProbe?.sampleTitle ?? undefined : undefined,
+        sampleUrl: enabled ? healthProbe?.sampleUrl ?? undefined : undefined,
         error,
         failureCount: runtime.failureCount,
         circuitOpen: runtime.circuitOpen,
@@ -648,9 +694,10 @@ router.get('/ops/summary', async (req, res) => {
     function normalizeFailureReason(errorMessage?: string | null, resultCount?: number): string {
       const text = (errorMessage || '').trim();
       if (!text) {
-        if ((resultCount ?? 0) === 0) return '空结果 / 疑似被拦截';
+        if ((resultCount ?? 0) === 0) return '空结果（关键词未命中）';
         return '未知失败';
       }
+      if (/empty|空结果|probe empty|returned empty/i.test(text)) return '空结果（关键词未命中）';
       if (/403|405|forbidden|waf|blocked|challenge|验证码|安全验证|被阻断/i.test(text)) return 'WAF / 安全挑战';
       if (/502|bad gateway/i.test(text)) return '502 网关错误';
       if (/429|too many requests|rate limit/i.test(text)) return '429 限流';
@@ -662,7 +709,7 @@ router.get('/ops/summary', async (req, res) => {
     }
 
     for (const probe of recentSourceProbes) {
-      if (!probe.ok) {
+      if (isOperationalProbeFailure(probe)) {
         probeFailureSummary24h[probe.sourceId] = (probeFailureSummary24h[probe.sourceId] || 0) + 1;
         const normalizedReason = normalizeFailureReason(probe.errorMessage, probe.resultCount);
         const bucket = failureReasons24h[probe.sourceId] || [];
@@ -681,7 +728,7 @@ router.get('/ops/summary', async (req, res) => {
         hasFailure: false
       };
 
-      if (!probe.ok) {
+      if (isOperationalProbeFailure(probe)) {
         current.hasFailure = true;
       }
 
@@ -718,6 +765,8 @@ router.get('/ops/summary', async (req, res) => {
       budgetCount: number;
       deadlineCount: number;
       contactCount: number;
+      phoneCount: number;
+      serviceScopeCount: number;
       detailCount: number;
       activeCount: number;
       expiredCount: number;
@@ -726,6 +775,7 @@ router.get('/ops/summary', async (req, res) => {
       missingCounts: Record<string, number>;
       dirtyIssueCount: number;
       dirtyIssues: Map<string, number>;
+      detailSourceBreakdown: Record<'missing' | 'blocked' | 'listOnly' | 'deep' | 'rules', number>;
     }>();
 
     for (const row of hotspotQualityRows) {
@@ -738,6 +788,8 @@ router.get('/ops/summary', async (req, res) => {
         budgetCount: 0,
         deadlineCount: 0,
         contactCount: 0,
+        phoneCount: 0,
+        serviceScopeCount: 0,
         detailCount: 0,
         activeCount: 0,
         expiredCount: 0,
@@ -748,23 +800,32 @@ router.get('/ops/summary', async (req, res) => {
           budget: 0,
           deadline: 0,
           contact: 0,
+          phone: 0,
+          serviceScope: 0,
           detail: 0
         },
         dirtyIssueCount: 0,
-        dirtyIssues: new Map<string, number>()
+        dirtyIssues: new Map<string, number>(),
+        detailSourceBreakdown: {
+          missing: 0,
+          blocked: 0,
+          listOnly: 0,
+          deep: 0,
+          rules: 0
+        }
       };
 
       item.total += 1;
       item.completenessTotal += completeness;
       quality.total += 0;
 
-      if (row.tenderUnit) {
+      if (isUsableTenderUnit(row.tenderUnit)) {
         quality.unitCount += 1;
         item.unitCount += 1;
       } else {
         item.missingCounts.unit += 1;
       }
-      if (row.tenderBudgetWan != null) {
+      if (isUsableBudgetWan(row.tenderBudgetWan)) {
         quality.budgetCount += 1;
         item.budgetCount += 1;
       } else {
@@ -776,14 +837,22 @@ router.get('/ops/summary', async (req, res) => {
       } else {
         item.missingCounts.deadline += 1;
       }
-      if (row.tenderContact) {
+      if (isUsableTenderContact(row.tenderContact)) {
         quality.contactCount += 1;
         item.contactCount += 1;
       } else {
         item.missingCounts.contact += 1;
       }
-      if (row.tenderPhone) {
+      if (isUsableTenderPhone(row.tenderPhone)) {
         quality.phoneCount += 1;
+        item.phoneCount += 1;
+      } else {
+        item.missingCounts.phone += 1;
+      }
+      if (isUsableTenderServiceScope(row.tenderServiceScope)) {
+        item.serviceScopeCount += 1;
+      } else {
+        item.missingCounts.serviceScope += 1;
       }
       if (row.tenderDetailSource) {
         quality.detailCount += 1;
@@ -791,6 +860,8 @@ router.get('/ops/summary', async (req, res) => {
       } else {
         item.missingCounts.detail += 1;
       }
+      const detailSourceCategory = classifyTenderDetailSource(row.tenderDetailSource);
+      item.detailSourceBreakdown[detailSourceCategory === 'list_only' ? 'listOnly' : detailSourceCategory] += 1;
       if (deadline == null || deadline >= Date.now()) {
         quality.activeCount += 1;
         item.activeCount += 1;
@@ -821,6 +892,8 @@ router.get('/ops/summary', async (req, res) => {
           budgetCount: 0,
           deadlineCount: 0,
           contactCount: 0,
+          phoneCount: 0,
+          serviceScopeCount: 0,
           detailCount: 0,
           activeCount: 0,
           expiredCount: 0,
@@ -831,10 +904,19 @@ router.get('/ops/summary', async (req, res) => {
             budget: 0,
             deadline: 0,
             contact: 0,
+            phone: 0,
+            serviceScope: 0,
             detail: 0
           },
           dirtyIssueCount: 0,
-          dirtyIssues: new Map<string, number>()
+          dirtyIssues: new Map<string, number>(),
+          detailSourceBreakdown: {
+            missing: 0,
+            blocked: 0,
+            listOnly: 0,
+            deep: 0,
+            rules: 0
+          }
         });
       }
     }
@@ -847,7 +929,10 @@ router.get('/ops/summary', async (req, res) => {
         budgetCoverage: item.total ? Math.round((item.budgetCount / item.total) * 100) : 0,
         deadlineCoverage: item.total ? Math.round((item.deadlineCount / item.total) * 100) : 0,
         contactCoverage: item.total ? Math.round((item.contactCount / item.total) * 100) : 0,
+        phoneCoverage: item.total ? Math.round((item.phoneCount / item.total) * 100) : 0,
+        serviceScopeCoverage: item.total ? Math.round((item.serviceScopeCount / item.total) * 100) : 0,
         detailCoverage: item.total ? Math.round((item.detailCount / item.total) * 100) : 0,
+        detailSourceBreakdown: item.detailSourceBreakdown,
         activeCount: item.activeCount,
         expiredCount: item.expiredCount,
         highCompletenessCount: item.highCompletenessCount,
@@ -910,6 +995,34 @@ router.get('/ops/summary', async (req, res) => {
     });
 
     const proxySnapshot = getProxyPoolSnapshot();
+    const proxyAlerts = proxySnapshot
+      .filter((item) => item.alertLevel !== 'healthy' || item.coolingDown || item.thresholdTriggered)
+      .map((item) => {
+        const detail = item.thresholdTriggered
+          ? `连续 ${item.consecutiveFailureStreak} 次 ${item.consecutiveFailureLabel || item.probeStatusLabel}，已触发阈值通知；当前路由策略为 ${item.routingModeLabel}`
+          : item.coolingDown
+            ? `已进入冷却，剩余约 ${Math.ceil(item.cooldownRemainingMs / 1000)} 秒；当前会优先降级到其他代理或直连`
+            : item.probeStatus === 'gateway_502'
+              ? '主动探测命中 502，当前会优先走其他健康出口，再回退到直连'
+              : item.probeStatus === 'timeout'
+                ? '主动探测超时，当前会降低该出口优先级，避免拖慢整轮抓取'
+                : item.probeStatus === 'tunnel_unreachable'
+                  ? '本地隧道不可达，当前会直接跳过该代理并走其他出口/直连'
+                  : item.probeStatus === 'auth_required'
+                    ? '代理认证失败，当前会跳过该出口直到配置恢复'
+                    : item.lastProbeError || item.lastError || item.probeStatusLabel;
+        return {
+          id: item.id,
+          severity: item.thresholdTriggered ? 'critical' : item.alertLevel,
+          label: item.thresholdTriggered ? '连续异常已越线' : item.probeStatusLabel,
+          category: item.thresholdTriggered ? item.consecutiveFailureCategory || item.probeStatus : item.probeStatus,
+          detail,
+          thresholdTriggered: item.thresholdTriggered,
+          thresholdTriggeredAt: item.thresholdTriggeredAt,
+          consecutiveFailureStreak: item.consecutiveFailureStreak,
+          alertThreshold: item.alertThreshold,
+        };
+      });
     const sourceAcceptance = TENDER_SOURCE_ADAPTERS.map((source) => {
       const qualityItem = sourceQualityById.get(source.id);
       const healthItem = sourceHealth.find((item) => item.id === source.id);
@@ -1117,6 +1230,7 @@ router.get('/ops/summary', async (req, res) => {
       runtimeConfig,
       sourceHealth,
       proxyPool: proxySnapshot,
+      proxyAlerts,
       recentRuns,
       latestRun,
       failureSummary24h: probeFailureSummary24h,
@@ -1191,9 +1305,11 @@ router.get('/detail-enrichment/status', async (_req, res) => {
 router.post('/detail-enrichment/run', async (req, res) => {
   try {
     const limit = typeof req.body?.limit === 'number' ? req.body.limit : 20;
-    const queued = await enqueueIncompleteHotspots(limit);
+    const source = typeof req.body?.source === 'string' ? req.body.source : undefined;
+    const queued = await enqueueIncompleteHotspots(limit, { source });
     res.status(202).json({
       queued,
+      source: source || 'all',
       queue: getDetailEnrichmentQueueState()
     });
   } catch (error) {
@@ -1256,7 +1372,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Hotspot not found' });
     }
 
-    res.json(hotspot);
+    res.json(decorateHotspotRecord(hotspot));
   } catch (error) {
     console.error('Error fetching hotspot:', error);
     res.status(500).json({ error: 'Failed to fetch hotspot' });
@@ -1295,7 +1411,7 @@ router.post('/search', async (req, res) => {
       results.slice(0, 10).map(async (item) => {
         try {
           const analysis = await analyzeContent(item.title + ' ' + item.content, query);
-          return {
+          return decorateHotspotRecord({
             ...item,
             id: `${item.source}:${item.sourceId || item.url}`,
             isReal: analysis.isReal,
@@ -1315,9 +1431,9 @@ router.post('/search', async (req, res) => {
             keyword: null,
             createdAt: new Date(),
             analysis
-          };
+          });
         } catch {
-          return {
+          return decorateHotspotRecord({
             ...item,
             id: `${item.source}:${item.sourceId || item.url}`,
             isReal: true,
@@ -1337,7 +1453,7 @@ router.post('/search', async (req, res) => {
             keyword: null,
             createdAt: new Date(),
             analysis: null
-          };
+          });
         }
       })
     );

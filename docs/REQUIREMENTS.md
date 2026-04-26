@@ -21,9 +21,9 @@
 2. 深圳阳光采购平台 `szygcgpt`
 3. 广东省公共资源交易平台 `guangdong`
 4. 广州公共资源交易公共服务平台 `gzebpubservice`
-5. 中国政府采购网 `ccgp`（v1.4 试点，默认不进入生产定时扫描）
-6. 全国公共资源交易平台 `ggzyNational`（v1.4 实验，当前 BIM 样本为空）
-7. 中国招标投标公共服务平台 `cebpubservice`（v1.4 试点，默认不进入生产定时扫描）
+5. 中国政府采购网 `ccgp`
+6. 全国公共资源交易平台 `ggzyNational`
+7. 中国招标投标公共服务平台 `cebpubservice`（v1.5 单源专项优化中）
 
 当前关键词方向：
 

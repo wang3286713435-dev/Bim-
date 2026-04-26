@@ -1,16 +1,42 @@
 # BIM Tender Monitor
 
-面向 BIM 招投标场景的政府招采监控系统。项目基于原开源项目二次开发，当前聚焦深圳、广东、广州等政府/阳光采购平台，输出真正可跟进的 BIM 投标机会，而不是泛热点列表。
+面向 BIM 招投标场景的政府招采监控系统。项目基于原开源项目二次开发，当前聚焦深圳、广东、广州及全国级公开招采平台，输出真正可跟进的 BIM 投标机会，而不是泛热点列表。
 
 ## 当前版本
 
-- `v1.4.0`（已收口：新增数据源接入能力工程化）
+- `v1.5.4`（生产热修：公告阶段误判修正 + v1.5 正式收口）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
+## CEB 详情会话复用
+
+- `CEB_DETAIL_FETCH_ENABLED=true`：开启 CEB 详情接口探测
+- `CEB_DETAIL_COOKIE=...`：直接传浏览器已验证 Cookie
+- `CEB_DETAIL_SESSION_FILE=/abs/path/ceb-session.json`：从文件读取 Cookie / UA / Referer / 额外请求头
+- `npm --prefix server run probe:ceb-detail-session -- --query=BIM`：验证当前会话是否可用
+
+会话文件示例：
+
+```json
+{
+  "cookie": "acw_tc=...; JSESSIONID=...; ...",
+  "userAgent": "Mozilla/5.0 ...",
+  "referer": "https://ctbpsp.com/#/bulletinDetail?uuid=...",
+  "extraHeaders": {
+    "X-Requested-With": "XMLHttpRequest"
+  }
+}
+```
+
+推荐做法：
+
+- 把真实会话文件放到 `/Users/Weishengsu/dev/yupi-hot-monitor/.secrets/ceb-session.json`
+- 参考模板：[docs/ceb-session.example.json](/Users/Weishengsu/dev/yupi-hot-monitor/docs/ceb-session.example.json)
+- 然后告诉我这个路径，或者让我直接按默认路径读取
+
 ## 核心能力
 
-- 聚焦 4 个 BIM 招采来源：`szggzy`、`szygcgpt`、`guangdong`、`gzebpubservice`
+- 聚焦 BIM 招采来源：深圳、广东、广州及全国级公开招采平台，当前默认包含 `szggzy`、`szygcgpt`、`guangdong`、`gzebpubservice`、`ccgp`、`ggzyNational`、`cebpubservice`
 - 列表抓取、详情增强、AI 识别、结构化字段提取、入库展示全链路闭环
 - 投标机会清单与项目详情页分层展示
 - 招采结构化筛选：地区、预算、截止时间、平台、BIM 类型
@@ -25,6 +51,9 @@
 - 深圳阳光采购平台 `szygcgpt`
 - 广东省公共资源交易平台 `guangdong`
 - 广州公共资源交易公共服务平台 `gzebpubservice`
+- 中国政府采购网 `ccgp`
+- 全国公共资源交易平台 `ggzyNational`
+- 中国招标投标公共服务平台 `cebpubservice`
 
 ## 项目结构
 
@@ -198,6 +227,7 @@ npm run start
 - `v1.2.0`：搜索建议、保存筛选视图、批量操作、浅色主题收口、监控日志与列表/筛选体验优化（已结束）
 - `v1.3.0`：后端稳定性、脏数据治理、广州源专项稳定化、AI/飞书可观测（已结束）
 - `v1.4.0`：新增数据源接入、adapter 模板、数据源接入 checklist、新源验收闸门、字段质量趋势（已收口）
+- `v1.5.0`：中国招标投标公共服务平台专项，字段完整性、详情降级和反爬状态可解释（开发中）
 
 ## License
 

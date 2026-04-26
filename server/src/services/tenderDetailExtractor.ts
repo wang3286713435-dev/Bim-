@@ -1,3 +1,9 @@
+import {
+  cleanTenderContact,
+  cleanTenderPhone,
+  cleanTenderServiceScope,
+  cleanTenderUnit
+} from './tenderFieldQuality.js';
 import type { SearchResult, TenderMetadata } from '../types.js';
 
 function decodeHtml(value: string): string {
@@ -26,6 +32,12 @@ function normalizeText(value: string | null | undefined): string {
     .trim();
 }
 
+function cleanProjectCode(value: string | null | undefined): string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized) return undefined;
+  return normalized.replace(/^[（(【\[]+/, '').replace(/[）)】\]；;，,。]+$/, '') || undefined;
+}
+
 function compact(value: string | null | undefined, maxLength = 240): string | undefined {
   const text = normalizeText(value)
     .replace(/^[：:\s]+/, '')
@@ -37,11 +49,7 @@ function compact(value: string | null | undefined, maxLength = 240): string | un
 function sanitizeTenderUnit(value: string | null | undefined): string | undefined {
   const text = compact(value, 120);
   if (!text) return undefined;
-  const cleaned = text
-    .split(/(?:项目名称|预算金额|联系地址|招标人联系人|项目联系人|联系人|联系电话|招标代理机构)/)[0]
-    ?.trim()
-    .replace(/[：:\s]+$/, '');
-  return cleaned || undefined;
+  return cleanTenderUnit(text) ?? undefined;
 }
 
 function pick(text: string, patterns: RegExp[], maxLength = 120): string | undefined {
@@ -115,12 +123,36 @@ function section(text: string, labels: string[], maxLength = 600): string | unde
 
 function extractTableFields(rawText: string): Record<string, string> {
   const fields: Record<string, string> = {};
-  const pattern = /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
-  for (const match of rawText.matchAll(pattern)) {
-    const label = compact(stripHtml(match[1]), 80)?.replace(/[：:]\s*$/, '');
-    const value = compact(stripHtml(match[2]), 500);
-    if (!label || !value) continue;
-    fields[label] = value;
+  const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const remember = (label: string | undefined, value: string | undefined) => {
+    if (!label || !value) return;
+    const normalizedLabel = label.replace(/[：:]\s*$/, '');
+    if (!normalizedLabel || !value) return;
+    if (!fields[normalizedLabel] || fields[normalizedLabel].length < value.length) {
+      fields[normalizedLabel] = value;
+    }
+  };
+
+  for (const row of rawText.matchAll(rowPattern)) {
+    const cells = Array.from(row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi))
+      .map((match) => compact(stripHtml(match[1]), 500))
+      .filter((value): value is string => Boolean(value));
+    if (cells.length < 2) continue;
+
+    if (cells.length === 2) {
+      remember(cells[0], cells[1]);
+      continue;
+    }
+
+    if (cells.length === 3) {
+      remember(cells[1], cells[2]);
+      continue;
+    }
+
+    const startIndex = cells.length % 2 === 1 ? 1 : 0;
+    for (let index = startIndex; index + 1 < cells.length; index += 2) {
+      remember(cells[index], cells[index + 1]);
+    }
   }
   return fields;
 }
@@ -163,16 +195,17 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
     /(?:招标单位|采购单位)[：:\s]*([^\n；;，,]{2,80})/
   ], 80);
 
-  const projectCode = pick(text, [
+  const projectCode = cleanProjectCode(pick(text, [
     /(?:项目编号|招标编号|采购编号|工程编号|标段编号|项目代码|项目统一编码)[：:\s]*([A-Za-z0-9\-_/（）()]+)/
-  ], 80);
+  ], 80));
 
   const phone = pick(text, [
-    /(?:联系方式|联系电话|联系人电话|电话|联系人及电话)[：:\s]*((?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?|1[3-9]\d{9})/,
-    /(?:联系电话|联系人电话|电话|联系方式)[：:\s]*((?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?|1[3-9]\d{9})/
+    /(?:联系方式|联系电话|联系人电话|电话|联系人及电话)[：:\s]*(1[3-9]\d{9}|(?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?)/,
+    /(?:联系电话|联系人电话|电话|联系方式)[：:\s]*(1[3-9]\d{9}|(?:0\d{2,3}[-\s]?)?\d{7,8}(?:-\d+)?)/
   ], 40);
 
   const contact = pick(text, [
+    /(?:经办人|项目负责人)[：:\s]*([^\n；;，,（(]{2,30})/,
     /(?:联系人及电话)[：:\s]*([^\n；;，,（(]{2,30})/,
     /(?:联系人姓名|项目联系人|联系人|招标联系人|采购联系人)[：:\s]*([^\n；;，,电话联系方式]{2,30})/,
     /(?:项目联系人|联系人|招标联系人|采购联系人)[：:\s]*([^\n；;，,电话联系方式]{2,30})/
@@ -189,6 +222,8 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
   return {
     ...result.tender,
     unit: sanitizeTenderUnit(tableFields['采购单位'])
+      || sanitizeTenderUnit(tableFields['单位名称'])
+      || sanitizeTenderUnit(tableFields['建设单位'])
       || sanitizeTenderUnit(tableFields['招标人'])
       || sanitizeTenderUnit(tableFields['采购人'])
       || sanitizeTenderUnit(tableFields['招标单位'])
@@ -217,15 +252,30 @@ export function extractTenderDetailFields(result: SearchResult): TenderMetadata 
       || parseDateCandidate(tableFields['递交投标文件截止时间'])
       || parseDateCandidate(tableFields['电子投标文件递交截止时间'])
       || bidOpenTime,
-    projectCode,
-    contact: tableFields['联系人'] || tableFields['项目联系人'] || contact,
-    phone: tableFields['联系电话'] || tableFields['联系人电话'] || tableFields['联系方式'] || phone,
-    email,
+    projectCode: projectCode || cleanProjectCode(result.tender?.projectCode),
+    contact: cleanTenderContact(tableFields['联系人'])
+      || cleanTenderContact(tableFields['项目联系人'])
+      || cleanTenderContact(result.tender?.contact)
+      || cleanTenderContact(tableFields['经办人'])
+      || cleanTenderContact(contact)
+      || undefined,
+    phone: cleanTenderPhone(tableFields['联系电话'])
+      || cleanTenderPhone(tableFields['联系人电话'])
+      || cleanTenderPhone(tableFields['联系方式'])
+      || cleanTenderPhone(result.tender?.phone)
+      || cleanTenderPhone(tableFields['办公电话'])
+      || cleanTenderPhone(tableFields['手机号码'])
+      || cleanTenderPhone(phone)
+      || undefined,
+    email: email || result.tender?.email,
     bidOpenTime: bidOpenTime || parseDateCandidate(tableFields['开标时间']),
     docDeadline: docDeadline || parseDateCandidate(tableFields['招标文件获取截止时间']) || parseDateCandidate(tableFields['文件获取截止时间']),
-    serviceScope: tableFields['采购需求概况'] || section(text, ['招标范围', '采购内容', '服务内容', '项目概况', '建设内容', '工作内容']),
-    qualification: section(text, ['投标人资格要求', '供应商资格要求', '资格要求', '资质要求']),
-    address,
+    serviceScope: cleanTenderServiceScope(tableFields['采购需求概况'])
+      || cleanTenderServiceScope(section(text, ['招标范围', '采购内容', '服务内容', '项目概况', '建设内容', '工作内容']))
+      || cleanTenderServiceScope(result.tender?.serviceScope)
+      || undefined,
+    qualification: section(text, ['投标人资格要求', '供应商资格要求', '资格要求', '资质要求']) || result.tender?.qualification,
+    address: address || result.tender?.address,
     detailSource: result.content.includes('--- Firecrawl 正文 ---') ? 'firecrawl+rules' : 'source-detail+rules',
     detailExtractedAt: new Date()
   };
