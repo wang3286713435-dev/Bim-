@@ -108,8 +108,9 @@ function getProxyAlertLevel(status: ProxyProbeStatus, coolingDown: boolean, thre
   return 'warning';
 }
 
-function getRoutingMode(status: ProxyProbeStatus, coolingDown: boolean): { mode: 'preferred' | 'degraded' | 'cooldown'; label: string } {
+function getRoutingMode(status: ProxyProbeStatus, coolingDown: boolean, thresholdTriggered: boolean): { mode: 'preferred' | 'degraded' | 'cooldown'; label: string } {
   if (coolingDown) return { mode: 'cooldown', label: '冷却跳过' };
+  if (thresholdTriggered) return { mode: 'degraded', label: '自动降级' };
   if (status === 'healthy' || status === 'untested') return { mode: 'preferred', label: '优先使用' };
   return { mode: 'degraded', label: '自动降级' };
 }
@@ -196,10 +197,13 @@ function compareProxyHealth(a: ProxyPoolEntry, b: ProxyPoolEntry): number {
   const probeB = getProxyProbeState(b.id);
   const coolingA = isCoolingDown(stateA);
   const coolingB = isCoolingDown(stateB);
+  const thresholdA = isThresholdTriggered(stateA);
+  const thresholdB = isThresholdTriggered(stateB);
   const probeRankA = probeA.probeStatus === 'healthy' ? 0 : probeA.probeStatus === 'untested' ? 1 : 2;
   const probeRankB = probeB.probeStatus === 'healthy' ? 0 : probeB.probeStatus === 'untested' ? 1 : 2;
 
   if (coolingA !== coolingB) return coolingA ? 1 : -1;
+  if (thresholdA !== thresholdB) return thresholdA ? 1 : -1;
   if (probeRankA !== probeRankB) return probeRankA - probeRankB;
   if (probeRankA === 0 && probeRankB === 0 && probeA.lastProbeLatencyMs !== probeB.lastProbeLatencyMs) {
     return (probeA.lastProbeLatencyMs ?? Number.POSITIVE_INFINITY) - (probeB.lastProbeLatencyMs ?? Number.POSITIVE_INFINITY);
@@ -226,14 +230,16 @@ function getProxyAttemptSequence(sourceId: TenderSourceId): Array<ProxyPoolEntry
 
   const healthyFirst = [...candidates].sort(compareProxyHealth);
   const preferred = healthyFirst.filter((entry) => {
-    if (isCoolingDown(getProxyState(entry.id))) return false;
+    const state = getProxyState(entry.id);
+    if (isCoolingDown(state) || isThresholdTriggered(state)) return false;
     const probeStatus = getProxyProbeState(entry.id).probeStatus;
     return probeStatus === 'healthy' || probeStatus === 'untested';
   });
   const degraded = healthyFirst.filter((entry) => {
-    if (isCoolingDown(getProxyState(entry.id))) return false;
+    const state = getProxyState(entry.id);
+    if (isCoolingDown(state)) return false;
     const probeStatus = getProxyProbeState(entry.id).probeStatus;
-    return probeStatus !== 'healthy' && probeStatus !== 'untested';
+    return isThresholdTriggered(state) || (probeStatus !== 'healthy' && probeStatus !== 'untested');
   });
   const cooling = healthyFirst.filter((entry) => isCoolingDown(getProxyState(entry.id)));
   const sequence: Array<ProxyPoolEntry | null> = [
@@ -730,7 +736,7 @@ export function getProxyPoolSnapshot() {
     const coolingDown = isCoolingDown(state);
     const thresholdTriggered = isThresholdTriggered(state);
     const alertLevel = getProxyAlertLevel(probeState.probeStatus, coolingDown, thresholdTriggered);
-    const routing = getRoutingMode(probeState.probeStatus, coolingDown);
+    const routing = getRoutingMode(probeState.probeStatus, coolingDown, thresholdTriggered);
     return {
       id: entry.id,
       host: entry.host,

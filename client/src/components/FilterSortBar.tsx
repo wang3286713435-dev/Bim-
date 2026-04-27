@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target, Search,
@@ -32,6 +32,8 @@ export interface SavedFilterView {
   filters: FilterState;
 }
 
+type ThemeMode = 'dark' | 'light';
+
 export const defaultFilterState: FilterState = {
   searchText: '',
   searchMode: 'fulltext',
@@ -64,6 +66,8 @@ interface FilterSortBarProps {
   onSaveView?: () => void;
   onApplyView?: (viewId: string) => void;
   onDeleteView?: (viewId: string) => void;
+  onClearRecentSearches?: () => void;
+  collapseStorageKey?: string;
 }
 
 const SORT_OPTIONS = [
@@ -178,7 +182,7 @@ function Dropdown({
   value: string;
   options: { value: string; label: string; color?: string }[];
   onChange: (v: string) => void;
-  themeMode?: 'dark' | 'light';
+  themeMode?: ThemeMode;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((o) => o.value === value);
@@ -240,15 +244,66 @@ function Dropdown({
   );
 }
 
-function FilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
+function FilterTag({
+  label,
+  onRemove,
+  themeMode = 'dark',
+}: {
+  label: string;
+  onRemove: () => void;
+  themeMode?: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-[10px] font-medium text-blue-400">
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-medium',
+      isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-blue-500/20 bg-blue-500/10 text-blue-400'
+    )}>
       {label}
-      <button onClick={onRemove} className="transition-colors hover:text-slate-700">
+      <button onClick={onRemove} className={cn('transition-colors', isLight ? 'hover:text-slate-900' : 'hover:text-slate-200')}>
         <X className="h-2.5 w-2.5" />
       </button>
     </span>
   );
+}
+
+const QUICK_STAGE_OPTIONS = [
+  { value: '', label: '全部' },
+  { value: 'actionable', label: '可跟进公告' },
+  { value: 'formal_notice', label: '正式公告' },
+  { value: 'pre-signal', label: '前置信号' },
+  { value: 'change_notice', label: '变更复核' },
+  { value: 'closed', label: '结果 / 合同' },
+];
+
+const STAGE_PRESET_OPTIONS: Array<{
+  id: string;
+  label: string;
+  description: string;
+  filters: Partial<FilterState>;
+}> = [
+  {
+    id: 'actionable-first',
+    label: '正式公告优先',
+    description: '仅看可直接判断的正式公告、资格预审和变更补遗。',
+    filters: { tenderStage: 'actionable', includeExpired: 'false', sortBy: 'importance', sortOrder: 'desc' },
+  },
+  {
+    id: 'pre-signal-watch',
+    label: '前置信号观察池',
+    description: '提前跟进采购意向和招标计划，不和正式公告混排。',
+    filters: { tenderStage: 'pre-signal', includeExpired: 'true', sortBy: 'publishedAt', sortOrder: 'desc' },
+  },
+  {
+    id: 'change-review',
+    label: '变更公告复核',
+    description: '优先复核补遗、澄清和窗口变化。',
+    filters: { tenderStage: 'change_notice', includeExpired: 'false', sortBy: 'deadlineStatus', sortOrder: 'asc' },
+  },
+];
+
+function matchesPreset(filters: FilterState, preset: Partial<FilterState>): boolean {
+  return Object.entries(preset).every(([key, value]) => filters[key as keyof FilterState] === value);
 }
 
 export default function FilterSortBar({
@@ -264,9 +319,20 @@ export default function FilterSortBar({
   onSaveView,
   onApplyView,
   onDeleteView,
+  onClearRecentSearches,
+  collapseStorageKey,
 }: FilterSortBarProps) {
   const [showFilters, setShowFilters] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === 'undefined' || !collapseStorageKey) return false;
+    return window.localStorage.getItem(collapseStorageKey) === 'true';
+  });
   const isLight = themeMode === 'light';
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !collapseStorageKey) return;
+    window.localStorage.setItem(collapseStorageKey, collapsed ? 'true' : 'false');
+  }, [collapseStorageKey, collapsed]);
 
   const activeFilterCount = [
     filters.source,
@@ -290,6 +356,10 @@ export default function FilterSortBar({
     onChange({ ...filters, [key]: value });
   };
 
+  const applyPreset = (preset: Partial<FilterState>) => {
+    onChange({ ...filters, ...preset });
+  };
+
   const resetFilters = () => {
     onChange({ ...defaultFilterState });
   };
@@ -298,6 +368,27 @@ export default function FilterSortBar({
     { value: '', label: '全部关键词' },
     ...keywords.filter((k) => k.isActive).map((k) => ({ value: k.id, label: k.text })),
   ];
+
+  const currentViewSummary = [
+    filters.tenderStage ? TENDER_STAGE_OPTIONS.find((o) => o.value === filters.tenderStage)?.label : '混合机会池',
+    filters.searchMode === 'title' ? '标题搜索' : '全字段搜索',
+    filters.includeExpired === 'false' ? '已隐藏已截止' : '包含已截止样本',
+    filters.sortBy ? SORT_OPTIONS.find((o) => o.value === filters.sortBy)?.label : '重要程度排序',
+  ].filter(Boolean).join(' · ');
+
+  const uniqueRecentSearches = useMemo(
+    () => Array.from(new Set(recentSearches.map((item) => item.trim()).filter(Boolean))),
+    [recentSearches]
+  );
+
+  const visibleSearchSuggestions = useMemo(() => {
+    const recentSet = new Set(uniqueRecentSearches.map((item) => item.toLowerCase()));
+    return searchSuggestions
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item) => !recentSet.has(item.toLowerCase()))
+      .slice(0, 6);
+  }, [searchSuggestions, uniqueRecentSearches]);
 
   return (
     <div className="space-y-3">
@@ -400,16 +491,23 @@ export default function FilterSortBar({
         </button>
 
         <button
-          onClick={() => setShowFilters(!showFilters)}
+          onClick={() => {
+            if (collapsed) {
+              setCollapsed(false);
+              setShowFilters(true);
+              return;
+            }
+            setShowFilters(!showFilters);
+          }}
           className={cn(
             'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-all',
             showFilters || activeFilterCount > 0
               ? 'border-blue-500/30 bg-blue-500/15 text-blue-400'
               : (isLight ? 'border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700' : 'border-white/10 bg-white/5 text-slate-400 hover:border-white/20 hover:text-slate-300')
           )}
-        >
-          <Filter className="h-3.5 w-3.5" />
-          筛选
+          >
+            <Filter className="h-3.5 w-3.5" />
+            筛选
           {activeFilterCount > 0 && (
             <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
               {activeFilterCount}
@@ -427,119 +525,221 @@ export default function FilterSortBar({
           </button>
         )}
 
+        <button
+          onClick={() => setCollapsed((prev) => !prev)}
+          className={cn(
+            'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-all',
+            isLight ? 'border-slate-200 bg-white text-slate-500 shadow-sm hover:text-slate-700' : 'border-white/10 bg-white/5 text-slate-400 hover:border-white/20 hover:text-slate-300'
+          )}
+        >
+          <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', collapsed && '-rotate-90')} />
+          {collapsed ? '展开面板' : '收起面板'}
+        </button>
+
         {activeFilterCount > 0 && !showFilters && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {filters.source && <FilterTag label={SOURCE_OPTIONS.find((o) => o.value === filters.source)?.label || filters.source} onRemove={() => update('source', '')} />}
-            {filters.tenderStage && <FilterTag label={TENDER_STAGE_OPTIONS.find((o) => o.value === filters.tenderStage)?.label || filters.tenderStage} onRemove={() => update('tenderStage', '')} />}
-            {filters.includeExpired === 'false' && <FilterTag label="已隐藏已截止" onRemove={() => update('includeExpired', 'true')} />}
-            {filters.importance && <FilterTag label={IMPORTANCE_OPTIONS.find((o) => o.value === filters.importance)?.label || filters.importance} onRemove={() => update('importance', '')} />}
-            {filters.keywordId && <FilterTag label={keywords.find((k) => k.id === filters.keywordId)?.text || '关键词'} onRemove={() => update('keywordId', '')} />}
-            {filters.timeRange && <FilterTag label={TIME_RANGE_OPTIONS.find((o) => o.value === filters.timeRange)?.label || filters.timeRange} onRemove={() => update('timeRange', '')} />}
-            {filters.isReal && <FilterTag label={REAL_OPTIONS.find((o) => o.value === filters.isReal)?.label || '真实性'} onRemove={() => update('isReal', '')} />}
-            {filters.tenderType && <FilterTag label={TENDER_TYPE_OPTIONS.find((o) => o.value === filters.tenderType)?.label || filters.tenderType} onRemove={() => update('tenderType', '')} />}
-            {filters.tenderRegion && <FilterTag label={TENDER_REGION_OPTIONS.find((o) => o.value === filters.tenderRegion)?.label || filters.tenderRegion} onRemove={() => update('tenderRegion', '')} />}
-            {filters.tenderMinBudgetWan && <FilterTag label={TENDER_BUDGET_OPTIONS.find((o) => o.value === filters.tenderMinBudgetWan)?.label || `≥ ${filters.tenderMinBudgetWan} 万`} onRemove={() => update('tenderMinBudgetWan', '')} />}
-            {filters.tenderDeadlineRange && <FilterTag label={TENDER_DEADLINE_OPTIONS.find((o) => o.value === filters.tenderDeadlineRange)?.label || filters.tenderDeadlineRange} onRemove={() => update('tenderDeadlineRange', '')} />}
-            {filters.tenderPlatform && <FilterTag label={TENDER_PLATFORM_OPTIONS.find((o) => o.value === filters.tenderPlatform)?.label || filters.tenderPlatform} onRemove={() => update('tenderPlatform', '')} />}
+            {filters.source && <FilterTag label={SOURCE_OPTIONS.find((o) => o.value === filters.source)?.label || filters.source} onRemove={() => update('source', '')} themeMode={themeMode} />}
+            {filters.tenderStage && <FilterTag label={TENDER_STAGE_OPTIONS.find((o) => o.value === filters.tenderStage)?.label || filters.tenderStage} onRemove={() => update('tenderStage', '')} themeMode={themeMode} />}
+            {filters.includeExpired === 'false' && <FilterTag label="已隐藏已截止" onRemove={() => update('includeExpired', 'true')} themeMode={themeMode} />}
+            {filters.importance && <FilterTag label={IMPORTANCE_OPTIONS.find((o) => o.value === filters.importance)?.label || filters.importance} onRemove={() => update('importance', '')} themeMode={themeMode} />}
+            {filters.keywordId && <FilterTag label={keywords.find((k) => k.id === filters.keywordId)?.text || '关键词'} onRemove={() => update('keywordId', '')} themeMode={themeMode} />}
+            {filters.timeRange && <FilterTag label={TIME_RANGE_OPTIONS.find((o) => o.value === filters.timeRange)?.label || filters.timeRange} onRemove={() => update('timeRange', '')} themeMode={themeMode} />}
+            {filters.isReal && <FilterTag label={REAL_OPTIONS.find((o) => o.value === filters.isReal)?.label || '真实性'} onRemove={() => update('isReal', '')} themeMode={themeMode} />}
+            {filters.tenderType && <FilterTag label={TENDER_TYPE_OPTIONS.find((o) => o.value === filters.tenderType)?.label || filters.tenderType} onRemove={() => update('tenderType', '')} themeMode={themeMode} />}
+            {filters.tenderRegion && <FilterTag label={TENDER_REGION_OPTIONS.find((o) => o.value === filters.tenderRegion)?.label || filters.tenderRegion} onRemove={() => update('tenderRegion', '')} themeMode={themeMode} />}
+            {filters.tenderMinBudgetWan && <FilterTag label={TENDER_BUDGET_OPTIONS.find((o) => o.value === filters.tenderMinBudgetWan)?.label || `≥ ${filters.tenderMinBudgetWan} 万`} onRemove={() => update('tenderMinBudgetWan', '')} themeMode={themeMode} />}
+            {filters.tenderDeadlineRange && <FilterTag label={TENDER_DEADLINE_OPTIONS.find((o) => o.value === filters.tenderDeadlineRange)?.label || filters.tenderDeadlineRange} onRemove={() => update('tenderDeadlineRange', '')} themeMode={themeMode} />}
+            {filters.tenderPlatform && <FilterTag label={TENDER_PLATFORM_OPTIONS.find((o) => o.value === filters.tenderPlatform)?.label || filters.tenderPlatform} onRemove={() => update('tenderPlatform', '')} themeMode={themeMode} />}
           </div>
         )}
       </div>
 
-      {(searchSuggestions.length > 0 || recentSearches.length > 0 || savedViews.length > 0) && (
-        <div className="space-y-2">
-          {searchSuggestions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">搜索建议</span>
-              {searchSuggestions.slice(0, 6).map((item) => (
-                <button
-                  key={`suggest-${item}`}
-                  onClick={() => onSelectSearch?.(item)}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs transition',
-                    isLight ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                  )}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          )}
+      {!collapsed && (
+        <>
+          <div className={cn(
+            'rounded-[22px] border p-3 shadow-[0_14px_40px_rgba(15,23,42,0.08)]',
+            isLight ? 'border-slate-200 bg-white/88' : 'border-white/8 bg-white/[0.03]'
+          )}>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">阶段视图预设</p>
+                  <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                    当前视图：{currentViewSummary}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {STAGE_PRESET_OPTIONS.map((preset) => {
+                    const active = matchesPreset(filters, preset.filters);
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => applyPreset(preset.filters)}
+                        className={cn(
+                          'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                          active
+                            ? (isLight ? 'border-cyan-300 bg-cyan-100 text-cyan-800' : 'border-cyan-300/30 bg-cyan-500/14 text-cyan-100')
+                            : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10')
+                        )}
+                        title={preset.description}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-          {recentSearches.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">最近搜索</span>
-              {recentSearches.slice(0, 6).map((item) => (
-                <button
-                  key={`recent-${item}`}
-                  onClick={() => onSelectSearch?.(item)}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs transition',
-                    isLight ? 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/10'
-                  )}
-                >
-                  {item}
-                </button>
-              ))}
+              <div className="flex flex-wrap gap-2">
+                {QUICK_STAGE_OPTIONS.map((option) => {
+                  const active = filters.tenderStage === option.value;
+                  return (
+                    <button
+                      key={option.value || 'all-stage'}
+                      onClick={() => update('tenderStage', active ? '' : option.value)}
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                        active
+                          ? (isLight ? 'border-slate-900 bg-slate-900 text-white' : 'border-white bg-white text-slate-900')
+                          : (isLight ? 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/10')
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          )}
+          </div>
 
-          {(savedViews.length > 0 || onSaveView) && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">常用视图</span>
-              {onSaveView && (
-                <button
-                  onClick={onSaveView}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs font-medium transition',
-                    isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100' : 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/15'
-                  )}
-                >
-                  保存当前视图
-                </button>
+          {(visibleSearchSuggestions.length > 0 || uniqueRecentSearches.length > 0 || savedViews.length > 0) && (
+            <div className="space-y-2">
+              {visibleSearchSuggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">搜索建议</span>
+                  {visibleSearchSuggestions.map((item) => (
+                    <button
+                      key={`suggest-${item}`}
+                      onClick={() => onSelectSearch?.(item)}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs transition',
+                        isLight ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                      )}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
               )}
-              {savedViews.slice(0, 6).map((view) => (
-                <span
-                  key={view.id}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs',
-                    isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/[0.03] text-slate-300'
-                  )}
-                >
-                  <button onClick={() => onApplyView?.(view.id)} className="transition hover:text-cyan-500">
-                    {view.name}
-                  </button>
-                  {onDeleteView && (
-                    <button onClick={() => onDeleteView(view.id)} className="transition hover:text-red-500">
-                      <X className="h-3 w-3" />
+
+              {uniqueRecentSearches.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">最近搜索</span>
+                  {uniqueRecentSearches.slice(0, 6).map((item) => (
+                    <button
+                      key={`recent-${item}`}
+                      onClick={() => onSelectSearch?.(item)}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs transition',
+                        isLight ? 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/10'
+                      )}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                  {onClearRecentSearches && (
+                    <button
+                      onClick={onClearRecentSearches}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs transition',
+                        isLight ? 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100 hover:text-slate-700' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                      )}
+                    >
+                      清空最近搜索
                     </button>
                   )}
-                </span>
-              ))}
+                </div>
+              )}
+
+              {(savedViews.length > 0 || onSaveView) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-slate-500">常用视图</span>
+                  {onSaveView && (
+                    <button
+                      onClick={onSaveView}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs font-medium transition',
+                        isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100' : 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/15'
+                      )}
+                    >
+                      保存当前视图
+                    </button>
+                  )}
+                  {savedViews.slice(0, 6).map((view) => (
+                    <span
+                      key={view.id}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs',
+                        isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/[0.03] text-slate-300'
+                      )}
+                    >
+                      <button onClick={() => onApplyView?.(view.id)} className="transition hover:text-cyan-500">
+                        {view.name}
+                      </button>
+                      {onDeleteView && (
+                        <button onClick={() => onDeleteView(view.id)} className="transition hover:text-red-500">
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
 
       <AnimatePresence>
-        {showFilters && (
+        {showFilters && !collapsed && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <div className={cn('flex flex-wrap items-center gap-2 rounded-xl p-3', isLight ? 'border border-slate-200 bg-white/80 shadow-[0_12px_40px_rgba(15,23,42,0.08)]' : 'border border-white/5 bg-white/[0.02]')}>
-              <Dropdown label="来源" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} themeMode={themeMode} />
-              <Dropdown label="公告阶段" value={filters.tenderStage} options={TENDER_STAGE_OPTIONS} onChange={(v) => update('tenderStage', v)} themeMode={themeMode} />
-              <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} themeMode={themeMode} />
-              <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} themeMode={themeMode} />
-              <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} themeMode={themeMode} />
-              <Dropdown label="真实性" value={filters.isReal} options={REAL_OPTIONS} onChange={(v) => update('isReal', v)} themeMode={themeMode} />
-              <Dropdown label="BIM 类型" value={filters.tenderType} options={TENDER_TYPE_OPTIONS} onChange={(v) => update('tenderType', v)} themeMode={themeMode} />
-              <Dropdown label="地区" value={filters.tenderRegion} options={TENDER_REGION_OPTIONS} onChange={(v) => update('tenderRegion', v)} themeMode={themeMode} />
-              <Dropdown label="预算" value={filters.tenderMinBudgetWan} options={TENDER_BUDGET_OPTIONS} onChange={(v) => update('tenderMinBudgetWan', v)} themeMode={themeMode} />
-              <Dropdown label="截止时间" value={filters.tenderDeadlineRange} options={TENDER_DEADLINE_OPTIONS} onChange={(v) => update('tenderDeadlineRange', v)} themeMode={themeMode} />
-              <Dropdown label="平台" value={filters.tenderPlatform} options={TENDER_PLATFORM_OPTIONS} onChange={(v) => update('tenderPlatform', v)} themeMode={themeMode} />
+            <div className="grid gap-3 xl:grid-cols-[1.1fr_1fr_1fr]">
+              <div className={cn('rounded-[22px] border p-3', isLight ? 'border-slate-200 bg-white/88 shadow-[0_12px_40px_rgba(15,23,42,0.08)]' : 'border border-white/5 bg-white/[0.02]')}>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">公告判断</p>
+                <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>先决定当前是看正式公告、前置信号还是变更复核，再继续压其他业务条件。</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Dropdown label="公告阶段" value={filters.tenderStage} options={TENDER_STAGE_OPTIONS} onChange={(v) => update('tenderStage', v)} themeMode={themeMode} />
+                  <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} themeMode={themeMode} />
+                  <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} themeMode={themeMode} />
+                  <Dropdown label="真实性" value={filters.isReal} options={REAL_OPTIONS} onChange={(v) => update('isReal', v)} themeMode={themeMode} />
+                  <Dropdown label="截止时间" value={filters.tenderDeadlineRange} options={TENDER_DEADLINE_OPTIONS} onChange={(v) => update('tenderDeadlineRange', v)} themeMode={themeMode} />
+                </div>
+              </div>
+
+              <div className={cn('rounded-[22px] border p-3', isLight ? 'border-slate-200 bg-white/88 shadow-[0_12px_40px_rgba(15,23,42,0.08)]' : 'border border-white/5 bg-white/[0.02]')}>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">业务约束</p>
+                <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>再按 BIM 类型、预算、地区和关键词压缩成更适合投标决策的候选池。</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} themeMode={themeMode} />
+                  <Dropdown label="BIM 类型" value={filters.tenderType} options={TENDER_TYPE_OPTIONS} onChange={(v) => update('tenderType', v)} themeMode={themeMode} />
+                  <Dropdown label="预算" value={filters.tenderMinBudgetWan} options={TENDER_BUDGET_OPTIONS} onChange={(v) => update('tenderMinBudgetWan', v)} themeMode={themeMode} />
+                  <Dropdown label="地区" value={filters.tenderRegion} options={TENDER_REGION_OPTIONS} onChange={(v) => update('tenderRegion', v)} themeMode={themeMode} />
+                </div>
+              </div>
+
+              <div className={cn('rounded-[22px] border p-3', isLight ? 'border-slate-200 bg-white/88 shadow-[0_12px_40px_rgba(15,23,42,0.08)]' : 'border border-white/5 bg-white/[0.02]')}>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">来源定位</p>
+                <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>当结果偏杂时，优先按来源和平台切分，快速定位是哪个数据源在产出或带来噪声。</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Dropdown label="来源" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} themeMode={themeMode} />
+                  <Dropdown label="平台" value={filters.tenderPlatform} options={TENDER_PLATFORM_OPTIONS} onChange={(v) => update('tenderPlatform', v)} themeMode={themeMode} />
+                </div>
+              </div>
             </div>
           </motion.div>
         )}

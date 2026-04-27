@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarClock,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
@@ -61,6 +62,15 @@ type Bucket = {
   value: number;
 };
 
+type TrendPoint = {
+  label: string;
+  shortLabel: string;
+  actionable: number;
+  preSignal: number;
+  expired: number;
+  priority: number;
+};
+
 const TAB_ITEMS: Array<{ key: TabKey; label: string; icon: typeof Radar }> = [
   { key: 'opportunities', label: '投标机会', icon: Gavel },
   { key: 'dashboard', label: '数据分析', icon: Radar },
@@ -105,17 +115,40 @@ function getSearchTerms(query: string): string[] {
     .filter((term) => term.length > 0);
 }
 
-function renderHighlightedText(text: string, query: string, className = 'bg-amber-300/25 text-amber-50'): ReactNode {
+function extractNotificationSearchText(notification: Pick<Notification, 'title' | 'content'>): string {
+  const normalizedTitle = notification.title.replace(/^发现新招采公告[:：]?\s*/u, '').trim();
+  if (normalizedTitle) return normalizedTitle;
+
+  const summaryHead = notification.content
+    .split(/[\n，,。；;]/u)
+    .map((item) => item.trim())
+    .find(Boolean);
+
+  return summaryHead || '';
+}
+
+function renderHighlightedText(
+  text: string,
+  query: string,
+  className = 'bg-amber-300/25 text-amber-50',
+  maxHighlights = Number.POSITIVE_INFINITY
+): ReactNode {
   const terms = getSearchTerms(query);
   if (!text || terms.length === 0) return text;
   const pattern = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
   const parts = text.split(pattern);
   if (parts.length === 1) return text;
+  let highlightedCount = 0;
   return parts.map((part, index) =>
-    terms.some((term) => part.toLowerCase() === term.toLowerCase()) ? (
+    terms.some((term) => part.toLowerCase() === term.toLowerCase()) && highlightedCount < maxHighlights ? (
+      (() => {
+        highlightedCount += 1;
+        return (
       <mark key={`${part}-${index}`} className={cn('rounded px-1 py-0.5 font-medium', className)}>
         {part}
       </mark>
+        );
+      })()
     ) : (
       <span key={`${part}-${index}`}>{part}</span>
     )
@@ -123,20 +156,24 @@ function renderHighlightedText(text: string, query: string, className = 'bg-ambe
 }
 
 function getBadgeTone(tone: string, themeMode: ThemeMode): string {
-  if (themeMode === 'dark') return tone;
-  if (tone.includes('red')) return 'border-red-200 bg-red-50 text-red-700';
-  if (tone.includes('orange')) return 'border-orange-200 bg-orange-50 text-orange-700';
-  if (tone.includes('amber')) return 'border-amber-200 bg-amber-50 text-amber-700';
-  if (tone.includes('emerald')) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (tone.includes('cyan')) return 'border-cyan-200 bg-cyan-50 text-cyan-700';
-  if (tone.includes('slate')) return 'border-slate-200 bg-slate-100 text-slate-700';
-  return 'border-slate-200 bg-white text-slate-700';
+  if (themeMode === 'dark') return `${tone} font-medium`;
+  if (tone.includes('red')) return 'font-medium border-red-300 bg-red-100 text-red-800';
+  if (tone.includes('rose')) return 'font-medium border-rose-300 bg-rose-100 text-rose-800';
+  if (tone.includes('orange')) return 'font-medium border-orange-300 bg-orange-100 text-orange-800';
+  if (tone.includes('amber')) return 'font-medium border-amber-300 bg-amber-100 text-amber-800';
+  if (tone.includes('emerald')) return 'font-medium border-emerald-300 bg-emerald-100 text-emerald-800';
+  if (tone.includes('violet')) return 'font-medium border-violet-300 bg-violet-100 text-violet-800';
+  if (tone.includes('sky')) return 'font-medium border-sky-300 bg-sky-100 text-sky-800';
+  if (tone.includes('cyan')) return 'font-medium border-cyan-300 bg-cyan-100 text-cyan-800';
+  if (tone.includes('slate')) return 'font-medium border-slate-300 bg-slate-100 text-slate-800';
+  if (tone.includes('white')) return 'font-medium border-slate-300 bg-white text-slate-800';
+  return 'font-medium border-slate-300 bg-white text-slate-800';
 }
 
 function getPlatformBadgeTone(themeMode: ThemeMode): string {
   return themeMode === 'light'
-    ? 'border-cyan-200 bg-cyan-50 text-cyan-700'
-    : 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200';
+    ? 'font-medium border-cyan-300 bg-cyan-100 text-cyan-800'
+    : 'font-medium border-cyan-400/20 bg-cyan-500/10 text-cyan-200';
 }
 
 function getOpportunityActionMeta(action: OpportunityAction | undefined, themeMode: ThemeMode): { label: string; tone: string } | null {
@@ -144,18 +181,18 @@ function getOpportunityActionMeta(action: OpportunityAction | undefined, themeMo
   if (action === 'follow') {
     return {
       label: '已标记跟进',
-      tone: themeMode === 'light' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+      tone: themeMode === 'light' ? 'font-medium border-emerald-300 bg-emerald-100 text-emerald-800' : 'font-medium border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
     };
   }
   if (action === 'archive') {
     return {
       label: '已归档',
-      tone: themeMode === 'light' ? 'border-slate-200 bg-slate-100 text-slate-700' : 'border-slate-400/15 bg-slate-500/10 text-slate-300'
+      tone: themeMode === 'light' ? 'font-medium border-slate-300 bg-slate-100 text-slate-800' : 'font-medium border-slate-400/15 bg-slate-500/10 text-slate-300'
     };
   }
   return {
     label: '已忽略',
-    tone: themeMode === 'light' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+    tone: themeMode === 'light' ? 'font-medium border-amber-300 bg-amber-100 text-amber-800' : 'font-medium border-amber-300/25 bg-amber-400/12 text-amber-200'
   };
 }
 
@@ -359,6 +396,131 @@ function buildTenderTypeBuckets(items: Hotspot[]): Bucket[] {
     .map(([label, value]) => ({ label, value }));
 }
 
+function buildStageBuckets(items: Hotspot[]): Bucket[] {
+  const counters = {
+    actionable: 0,
+    preSignal: 0,
+    change: 0,
+    closed: 0,
+    unknown: 0
+  };
+
+  for (const item of items) {
+    switch (item.tenderStageBucket) {
+      case 'actionable':
+        counters.actionable += 1;
+        break;
+      case 'pre-signal':
+        counters.preSignal += 1;
+        break;
+      case 'change':
+        counters.change += 1;
+        break;
+      case 'closed':
+        counters.closed += 1;
+        break;
+      default:
+        counters.unknown += 1;
+        break;
+    }
+  }
+
+  return [
+    { label: '正式可跟进', value: counters.actionable },
+    { label: '前置信号', value: counters.preSignal },
+    { label: '变更复核', value: counters.change },
+    { label: '结果归档', value: counters.closed },
+    { label: '待判定', value: counters.unknown }
+  ];
+}
+
+function buildTrendPoints(items: Hotspot[]): TrendPoint[] {
+  const formatter = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' });
+  const now = new Date();
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const current = new Date(base);
+    current.setDate(base.getDate() - (6 - index));
+    const key = current.toISOString().slice(0, 10);
+    return {
+      key,
+      label: formatter.format(current).replace('/', ' / '),
+      shortLabel: formatter.format(current).split('/').pop() || `${current.getDate()}`,
+      actionable: 0,
+      preSignal: 0,
+      expired: 0,
+      priority: 0,
+    };
+  });
+  const dayMap = new Map(days.map((item) => [item.key, item]));
+
+  for (const item of items) {
+    const rawDate = item.publishedAt || item.createdAt;
+    if (!rawDate) continue;
+    const date = new Date(rawDate);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = date.toISOString().slice(0, 10);
+    const target = dayMap.get(key);
+    if (!target) continue;
+
+    if (item.tenderStageBucket === 'actionable') target.actionable += 1;
+    if (item.tenderStageBucket === 'pre-signal') target.preSignal += 1;
+    if (getDeadlineInfo(getEffectiveDeadline(item)).urgency === 'expired') target.expired += 1;
+    if (getOpportunityRank(item).label === '优先跟进') target.priority += 1;
+  }
+
+  return days;
+}
+
+function getLeadingBucket(data: Bucket[]): Bucket | null {
+  const filtered = data.filter((item) => item.value > 0);
+  if (!filtered.length) return null;
+  return [...filtered].sort((a, b) => b.value - a.value)[0];
+}
+
+function buildBusinessReadouts(items: Hotspot[], regionBuckets: Bucket[], budgetBuckets: Bucket[], typeBuckets: Bucket[]): Array<{
+  title: string;
+  summary: string;
+  detail: string;
+  tone: string;
+}> {
+  const regionLead = getLeadingBucket(regionBuckets);
+  const budgetLead = getLeadingBucket(budgetBuckets);
+  const typeLead = getLeadingBucket(typeBuckets);
+  const stageSummary = buildOpportunityStageSummary(items);
+  const actionableShare = items.length ? Math.round((stageSummary.actionable / items.length) * 100) : 0;
+  const signalShare = items.length ? Math.round((stageSummary.preSignal / items.length) * 100) : 0;
+
+  return [
+    {
+      title: '区域热点',
+      summary: regionLead ? `${regionLead.label} 是当前最密集的项目区域。` : '当前还没有形成明显区域热点。',
+      detail: regionLead ? `当前样本里 ${regionLead.label} 有 ${regionLead.value} 条，可优先安排本地资源判断。` : '等待更多样本后再判断是深圳、广州还是全国项目在抬头。',
+      tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200',
+    },
+    {
+      title: '预算结构',
+      summary: budgetLead ? `${budgetLead.label} 是当前最常见的预算区间。` : '当前披露预算的样本还不够多。',
+      detail: budgetLead ? `如果这个区间持续占比最高，首页可以优先按 ${budgetLead.label} 的资源投入做商机判断。`
+        : '建议继续补强预算字段，方便后面做更稳定的体量分析。',
+      tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200',
+    },
+    {
+      title: '类型偏向',
+      summary: typeLead ? `${typeLead.label} 是当前最活跃的 BIM 需求方向。` : '当前 BIM 类型分布仍偏分散。',
+      detail: typeLead ? `当前样本里 ${typeLead.label} 共 ${typeLead.value} 条，可优先匹配设计、施工或咨询资源。`
+        : '后面可以继续按 BIM 类型做更细的团队分派视图。',
+      tone: 'border-violet-400/20 bg-violet-500/10 text-violet-200',
+    },
+    {
+      title: '机会结构',
+      summary: actionableShare >= signalShare ? '正式可跟进公告仍是主线。' : '前置信号占比更高，适合 BD 提前卡位。',
+      detail: `当前正式机会占比 ${actionableShare}% ，前置信号占比 ${signalShare}% ，可以据此决定是优先做投标判断还是做前哨跟踪。`,
+      tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200',
+    },
+  ];
+}
+
 function formatBudget(value: number | null): string {
   if (value == null) return '未披露';
   if (value >= 10000) return `${(value / 10000).toFixed(1)} 亿元`;
@@ -367,7 +529,12 @@ function formatBudget(value: number | null): string {
 
 function isFallbackAIReason(reason: string | null): boolean {
   if (!reason) return false;
-  return reason.includes('未配置 AI 服务') || reason.includes('AI 分析失败') || reason.includes('默认分数');
+  return reason.includes('未配置 AI 服务')
+    || reason.includes('AI 分析失败')
+    || reason.includes('AI 分析超时或失败')
+    || reason.includes('规则投标分析')
+    || reason.includes('规则判断')
+    || reason.includes('默认分数');
 }
 
 function getEffectiveDeadline(hotspot: Pick<Hotspot, 'tenderDeadline' | 'tenderBidOpenTime' | 'tenderDocDeadline'>): string | null {
@@ -444,6 +611,146 @@ function getNoticeStage(
   }
 }
 
+function getOpportunitySortLabel(sortBy: string | undefined): string {
+  switch (sortBy) {
+    case 'publishedAt':
+      return '按最新发布排序';
+    case 'deadlineStatus':
+      return '按截止窗口排序';
+    case 'relevance':
+      return '按业务相关性排序';
+    case 'importance':
+      return '按重要程度排序';
+    default:
+      return '按最新发现排序';
+  }
+}
+
+function getOpportunityViewMeta(filters: Pick<FilterState, 'tenderStage' | 'includeExpired' | 'sortBy'>): {
+  label: string;
+  description: string;
+  tone: string;
+} {
+  const sortLabel = getOpportunitySortLabel(filters.sortBy);
+  const includeExpired = filters.includeExpired !== 'false';
+
+  switch (filters.tenderStage) {
+    case 'actionable':
+      return {
+        label: '可跟进公告视图',
+        description: `仅保留正式公告、资格预审和变更补遗；${sortLabel}。${includeExpired ? '当前包含已截止样本。' : '已自动隐藏已截止样本。'}`,
+        tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200'
+      };
+    case 'formal_notice':
+      return {
+        label: '正式公告视图',
+        description: `聚焦真正可投标的正式公告；${sortLabel}。`,
+        tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200'
+      };
+    case 'prequalification_notice':
+      return {
+        label: '资格预审视图',
+        description: `适合优先核对资格门槛、报名窗口和联合体要求；${sortLabel}。`,
+        tone: 'border-sky-400/20 bg-sky-500/10 text-sky-200'
+      };
+    case 'change':
+    case 'change_notice':
+      return {
+        label: '变更复核视图',
+        description: `重点检查截止时间、文件范围和资质条件是否发生变化；${sortLabel}。`,
+        tone: 'border-orange-300/25 bg-orange-400/12 text-orange-200'
+      };
+    case 'pre-signal':
+      return {
+        label: '前置信号观察池',
+        description: `用于提前跟踪采购意向和招标计划，等待正式公告落地；${sortLabel}。`,
+        tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+      };
+    case 'procurement_intent':
+      return {
+        label: '采购意向观察池',
+        description: `优先观察需求方向、预算线索和预计采购时间，不与正式公告混排；${sortLabel}。`,
+        tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+      };
+    case 'tender_plan':
+      return {
+        label: '招标计划观察池',
+        description: `适合前置跟踪预计招标时间、建设地点和项目概况；${sortLabel}。`,
+        tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+      };
+    case 'closed':
+    case 'result_notice':
+    case 'contract_notice':
+      return {
+        label: '归档信息视图',
+        description: `当前以结果公示和合同履约样本为主，适合作为复盘或客户线索；${sortLabel}。`,
+        tone: 'border-slate-400/15 bg-slate-500/10 text-slate-300'
+      };
+    default:
+      return {
+        label: '混合机会池',
+        description: `当前同时展示正式公告、前置信号和变更样本；${sortLabel}。${includeExpired ? '如需聚焦当前机会，可关闭已截止样本。' : '已截止样本已隐藏。'}`,
+        tone: 'border-white/10 bg-white/5 text-slate-300'
+      };
+  }
+}
+
+function getOpportunitySummary(hotspot: Hotspot): string {
+  if (hotspot.tenderStageBucket === 'pre-signal') {
+    return hotspot.tenderStageCategory === 'procurement_intent'
+      ? hotspot.tenderServiceScope || '当前是采购意向线索，优先关注预算、需求概况和预计采购时间。'
+      : hotspot.tenderServiceScope || '当前是招标计划线索，优先关注预计招标时间、项目地点和计划阶段。';
+  }
+
+  if (hotspot.tenderStageBucket === 'change') {
+    return hotspot.tenderServiceScope || hotspot.summary || '当前进入变更或补遗阶段，建议先核对截止时间、文件范围和资格条件变化。';
+  }
+
+  if (hotspot.tenderStageBucket === 'closed') {
+    return hotspot.summary || '当前属于结果或合同阶段，适合作为历史样本复盘，不再进入一线投标决策。';
+  }
+
+  return hotspot.summary
+    || hotspot.tenderServiceScope
+    || (hotspot.tenderUnit
+      ? `优先确认 ${hotspot.tenderUnit} 的招采条件、资质要求和投标截止节点。`
+      : '当前公告缺少单位或预算字段，建议进入详情页补齐关键信息后再判断是否跟进。');
+}
+
+function getOpportunityPriorityReason(hotspot: Hotspot): string {
+  const deadline = getDeadlineInfo(getEffectiveDeadline(hotspot));
+  const completeness = getFieldCompleteness(hotspot);
+
+  if (hotspot.tenderStageBucket === 'pre-signal') {
+    return hotspot.tenderStageCategory === 'procurement_intent' ? '优先作为采购需求前哨线索' : '优先作为招标计划前哨线索';
+  }
+  if (hotspot.tenderStageBucket === 'change') return '优先复核变更是否影响投标窗口';
+  if (deadline.urgency === 'urgent') return '截止窗口紧，优先核对报名与投标节点';
+  if (hotspot.tenderBudgetWan != null && hotspot.tenderBudgetWan >= 100) return '预算规模较高，优先进入资源评估';
+  if (completeness.score >= 75) return '核心字段较完整，适合直接判断';
+  if (hotspot.relevance >= 80) return '业务匹配度较高，建议尽快筛查';
+  return '保留在线索池，等待更多字段或人工判断';
+}
+
+function buildOpportunityStageSummary(items: Hotspot[]) {
+  return items.reduce((acc, item) => {
+    if (item.tenderStageBucket === 'actionable') acc.actionable += 1;
+    if (item.tenderStageBucket === 'pre-signal') acc.preSignal += 1;
+    if (item.tenderStageBucket === 'change') acc.change += 1;
+    if (item.tenderStageBucket === 'closed') acc.closed += 1;
+    if (item.tenderActionable && getDeadlineInfo(getEffectiveDeadline(item)).urgency === 'urgent') acc.urgent += 1;
+    if (item.tenderActionable && getFieldCompleteness(item).score >= 75) acc.complete += 1;
+    return acc;
+  }, {
+    actionable: 0,
+    preSignal: 0,
+    change: 0,
+    closed: 0,
+    urgent: 0,
+    complete: 0
+  });
+}
+
 function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDetailSource'>): { label: string; tone: string } {
   const url = hotspot.url || '';
   const source = hotspot.tenderDetailSource || '';
@@ -465,6 +772,57 @@ function getDetailReliability(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDe
     return { label: '原始详情已校验', tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200' };
   }
   return { label: '待人工核验', tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200' };
+}
+
+function getDetailReliabilityNarrative(hotspot: Pick<Hotspot, 'url' | 'title' | 'tenderDetailSource'>): {
+  title: string;
+  description: string;
+  nextStep: string;
+} {
+  const source = hotspot.tenderDetailSource || '';
+  const url = hotspot.url || '';
+  const title = hotspot.title || '';
+
+  if (url.includes('show-bid-opening/list') || /中标|成交|结果公告|候选人公示/.test(title)) {
+    return {
+      title: '结果页可信度偏低',
+      description: '当前链接更像开标、结果或公示页，字段虽然能看，但不适合作为正式投标判断依据。',
+      nextStep: '优先回原公告或官方详情页，核对预算、截止时间和报名要求是否来自同一项目。',
+    };
+  }
+  if (source.includes('firecrawl-detail-json') || source.includes('detail-enrichment+agent-firecrawl') || source.includes('detail-enrichment+openclaw-browser')) {
+    return {
+      title: '深抓取详情',
+      description: '字段来自浏览器深抓取或增强队列，通常比列表页更完整，适合直接用于投标初筛。',
+      nextStep: '优先核对联系人、预算和资格要求，再决定是否推送飞书或进入跟进池。',
+    };
+  }
+  if (source.includes('szggzy-api+rules') || source.includes('source-detail+rules') || source.includes('detail-enrichment')) {
+    return {
+      title: '官方详情已解析',
+      description: '字段来自平台官方详情接口或规则解析，可靠性较高，适合直接判断项目窗口和单位信息。',
+      nextStep: '重点复核时间轴、项目编号和服务范围是否满足当前投标策略。',
+    };
+  }
+  if (source.includes('ceb-list+official-table')) {
+    return {
+      title: '官方列表可信',
+      description: '当前主要来自平台官方列表，标题和基础信息可信，但详情字段仍可能不完整。',
+      nextStep: '先作为线索保留，等正式详情补齐后再决定是否进入一线跟进。',
+    };
+  }
+  if (url.includes('szggzy.com/globalSearch/details.html') || url.includes('nodeId=') || url.includes('detailTop') || /gzebpubservice\.cn\/jyfw\//.test(url)) {
+    return {
+      title: '原始详情已校验',
+      description: '当前详情链接本身是可信的原始公告地址，适合人工继续确认原文和附件。',
+      nextStep: '可直接打开原始公告，对照页面正文确认附件、资格要求和报名方式。',
+    };
+  }
+  return {
+    title: '待人工核验',
+    description: '当前字段主要来自列表或规则推断，还不适合完全替代人工核验。',
+    nextStep: '先核对单位、预算和截止时间，再决定是否推进为正式机会。',
+  };
 }
 
 function getBidAction(hotspot: Hotspot): string {
@@ -714,6 +1072,218 @@ function AnalysisCard({ title, value, caption, icon: Icon, tone, themeMode = 'da
   );
 }
 
+function TrendPanel({
+  title,
+  subtitle,
+  points,
+  themeMode = 'dark',
+}: {
+  title: string;
+  subtitle: string;
+  points: TrendPoint[];
+  themeMode?: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
+  const metrics = [
+    { key: 'actionable', label: '新机会', tone: 'bg-[linear-gradient(90deg,#22d3ee,#14b8a6)]' },
+    { key: 'preSignal', label: '前置信号', tone: 'bg-[linear-gradient(90deg,#f59e0b,#fbbf24)]' },
+    { key: 'expired', label: '已截止', tone: 'bg-[linear-gradient(90deg,#94a3b8,#64748b)]' },
+    { key: 'priority', label: '优先跟进池', tone: 'bg-[linear-gradient(90deg,#fb7185,#ef4444)]' },
+  ] as const;
+  const max = Math.max(
+    1,
+    ...points.flatMap((point) => metrics.map((metric) => point[metric.key]))
+  );
+
+  return (
+    <section className={cn(
+      'rounded-[28px] border p-5 shadow-[0_20px_80px_rgba(0,0,0,0.24)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{title}</h3>
+          <p className={cn('mt-1 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{subtitle}</p>
+        </div>
+        <span className={cn('rounded-full border px-3 py-1.5 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>
+          最近 7 天
+        </span>
+      </div>
+
+      <div className="space-y-4">
+        {metrics.map((metric) => (
+          <div key={metric.key}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className={cn('text-sm font-medium', isLight ? 'text-slate-800' : 'text-slate-200')}>{metric.label}</span>
+              <span className="text-xs text-slate-500">{points.reduce((sum, point) => sum + point[metric.key], 0)} 条</span>
+            </div>
+            <div className="grid grid-cols-7 gap-2">
+              {points.map((point) => (
+                <div key={`${metric.key}-${point.label}`} className={cn('rounded-2xl border p-2.5', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+                  <div className="flex h-16 items-end">
+                    <div className={cn('w-full rounded-full transition-all', metric.tone)} style={{ height: `${Math.max(8, Math.round((point[metric.key] / max) * 100))}%` }} />
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-500">{point.shortLabel}</p>
+                  <p className={cn('mt-1 text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{point[metric.key]}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReadoutPanel({
+  title,
+  subtitle,
+  items,
+  themeMode = 'dark',
+}: {
+  title: string;
+  subtitle: string;
+  items: Array<{ title: string; summary: string; detail: string; tone: string }>;
+  themeMode?: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
+  return (
+    <section className={cn(
+      'rounded-[28px] border p-5 shadow-[0_20px_80px_rgba(0,0,0,0.24)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5">
+        <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{title}</h3>
+        <p className={cn('mt-1 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{subtitle}</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {items.map((item) => (
+          <div key={item.title} className={cn('rounded-[24px] border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+            <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[11px]', getBadgeTone(item.tone, themeMode))}>{item.title}</span>
+            <p className={cn('mt-3 text-base font-semibold leading-7', isLight ? 'text-slate-900' : 'text-white')}>{item.summary}</p>
+            <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{item.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProxyFact({
+  label,
+  value,
+  themeMode = 'dark',
+}: {
+  label: string;
+  value: string;
+  themeMode?: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
+  return (
+    <div className={cn(
+      'rounded-2xl border px-3 py-3',
+      isLight ? 'border-slate-200 bg-white' : 'border-white/8 bg-white/[0.035]'
+    )}>
+      <p className={cn('text-[11px] uppercase tracking-[0.18em]', isLight ? 'text-slate-500' : 'text-slate-500')}>{label}</p>
+      <p className={cn('mt-2 text-sm leading-6 break-words', isLight ? 'text-slate-900' : 'text-slate-200')}>{value}</p>
+    </div>
+  );
+}
+
+function SourceQualityComparePanel({ summary, themeMode = 'dark' }: { summary: OpsSummary | null; themeMode?: ThemeMode }) {
+  const isLight = themeMode === 'light';
+  const rows = useMemo(() => {
+    if (!summary) return [];
+    return [...summary.sourceQuality]
+      .map((item) => ({
+        source: item.source,
+        label: getSourceLabel(item.source),
+        qualityScore: item.qualityScore,
+        activeCount: item.activeCount,
+        detailCoverage: item.detailCoverage,
+        contactCoverage: item.contactCoverage,
+        qualityGrade: item.qualityGrade,
+      }))
+      .sort((a, b) => b.qualityScore - a.qualityScore || b.activeCount - a.activeCount)
+      .slice(0, 5);
+  }, [summary]);
+
+  const weakest = useMemo(() => {
+    if (!summary?.sourceQuality?.length) return null;
+    return [...summary.sourceQuality]
+      .sort((a, b) => a.qualityScore - b.qualityScore || b.dirtyIssueCount - a.dirtyIssueCount)[0];
+  }, [summary]);
+
+  return (
+    <section className={cn(
+      'rounded-[32px] border p-6 shadow-[0_24px_100px_rgba(0,0,0,0.3)]',
+      isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]'
+    )}>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-cyan-300/75">Source Quality</p>
+          <h3 className={cn('mt-2 text-2xl font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源质量对比</h3>
+          <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>把质量高、能稳定产出有效机会的来源放到前面，也把最需要治理的来源直接挑出来。</p>
+        </div>
+        {weakest && (
+          <span className={cn(
+            'rounded-full border px-3 py-1.5 text-xs',
+            getBadgeTone('border-amber-300/25 bg-amber-400/12 text-amber-200', themeMode)
+          )}>
+            当前待治理：{getSourceLabel(weakest.source)}
+          </span>
+        )}
+      </div>
+      <div className="space-y-3">
+        {rows.map((item, index) => (
+          <div
+            key={item.source}
+            className={cn(
+              'rounded-[24px] border p-4',
+              isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]'
+            )}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={cn(
+                    'rounded-full border px-2.5 py-1 text-[11px]',
+                    index === 0
+                      ? getBadgeTone('border-emerald-400/20 bg-emerald-500/10 text-emerald-200', themeMode)
+                      : isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/5 text-slate-300'
+                  )}>
+                    {index === 0 ? '当前最稳' : `TOP ${index + 1}`}
+                  </span>
+                  <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.label}</p>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  质量分 {item.qualityScore} · 可跟进 {item.activeCount} · 详情解析率 {item.detailCoverage}% · 联系人披露 {item.contactCoverage}%
+                </p>
+              </div>
+              <span className={cn('rounded-full border px-3 py-1 text-xs', getBadgeTone(
+                item.qualityScore >= 70
+                  ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                  : item.qualityScore >= 45
+                    ? 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+                    : 'border-red-400/20 bg-red-500/10 text-red-200',
+                themeMode
+              ))}>
+                {item.qualityScore >= 70 ? '稳定产出' : item.qualityScore >= 45 ? '待补强' : '需治理'}
+              </span>
+            </div>
+            <div className={cn('mt-4 h-2 overflow-hidden rounded-full', isLight ? 'bg-slate-100' : 'bg-white/8')}>
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#22c55e,#0ea5e9)]"
+                style={{ width: `${Math.max(item.qualityScore, 8)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TenderFact({ label, value, icon: Icon, strong = false, themeMode = 'dark' }: {
   label: string;
   value: string;
@@ -757,6 +1327,29 @@ function DetailField({
         {value}
       </div>
     </div>
+  );
+}
+
+function DetailFieldSection({
+  title,
+  subtitle,
+  children,
+  themeMode = 'dark',
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  themeMode?: ThemeMode;
+}) {
+  const isLight = themeMode === 'light';
+  return (
+    <section className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
+      <div className="mb-4">
+        <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{title}</h3>
+        <p className={cn('mt-1 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{subtitle}</p>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -806,6 +1399,7 @@ function HotspotDetailPage({
   const completeness = hotspot ? getFieldCompleteness(hotspot) : null;
   const recommendation = hotspot ? getFollowUpRecommendation(hotspot) : null;
   const timeline = hotspot ? buildTimeline(hotspot) : [];
+  const detailNarrative = hotspot ? getDetailReliabilityNarrative(hotspot) : null;
 
   return (
     <section className="space-y-6">
@@ -824,13 +1418,13 @@ function HotspotDetailPage({
               </h2>
               {hotspot && (
                 <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                  <span className={cn('rounded-full border px-2.5 py-1', getPlatformBadgeTone(themeMode))}>
+                  <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getPlatformBadgeTone(themeMode))}>
                     {hotspot.tenderPlatform || getSourceLabel(hotspot.source)}
                   </span>
-                  {deadline && <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(deadline.tone, themeMode))}>{deadline.label}</span>}
-                  {stage && <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>}
-                  {detailReliability && <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(detailReliability.tone, themeMode))}>{detailReliability.label}</span>}
-                  {completeness && <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(completeness.tone, themeMode))}>{completeness.label} · {completeness.score}</span>}
+                  {deadline && <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(deadline.tone, themeMode))}>{deadline.label}</span>}
+                  {stage && <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>}
+                  {detailReliability && <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(detailReliability.tone, themeMode))}>{detailReliability.label}</span>}
+                  {completeness && <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(completeness.tone, themeMode))}>{completeness.label} · {completeness.score}</span>}
                 </div>
               )}
             </div>
@@ -863,10 +1457,10 @@ function HotspotDetailPage({
             <TenderFact label="预算金额" value={formatBudget(hotspot.tenderBudgetWan)} icon={WalletCards} strong themeMode={themeMode} />
             <TenderFact label="截止时间" value={getEffectiveDeadline(hotspot) ? formatDateTime(getEffectiveDeadline(hotspot)!) : '未披露'} icon={CalendarClock} strong themeMode={themeMode} />
             <TenderFact label="项目编号" value={hotspot.tenderProjectCode || '未披露'} icon={ClipboardCheck} themeMode={themeMode} />
-            <TenderFact label="发布时间" value={published} icon={ClipboardCheck} themeMode={themeMode} />
+            <TenderFact label="详情可信度" value={detailNarrative?.title || '待核验'} icon={ShieldCheck} themeMode={themeMode} />
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <section className="grid gap-4 2xl:grid-cols-[1.15fr_0.85fr]">
             <div className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
               <div className="flex items-center justify-between gap-3">
                 <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>跟进建议</h3>
@@ -876,6 +1470,16 @@ function HotspotDetailPage({
               <p className={cn('mt-2 text-sm leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
                 {recommendation?.summary || '建议先完成基础字段核验，再决定是否推进。'}
               </p>
+              {detailNarrative && (
+                <div className={cn('mt-4 rounded-[22px] border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{detailNarrative.title}</span>
+                    {detailReliability && <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', getBadgeTone(detailReliability.tone, themeMode))}>{detailReliability.label}</span>}
+                  </div>
+                  <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{detailNarrative.description}</p>
+                  <p className={cn('mt-3 text-sm font-medium leading-6', isLight ? 'text-slate-700' : 'text-slate-200')}>下一步：{detailNarrative.nextStep}</p>
+                </div>
+              )}
             </div>
 
             <div className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
@@ -902,21 +1506,44 @@ function HotspotDetailPage({
             </div>
           </section>
 
-          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <DetailField label="地区 / 城市" value={region} icon={MapPin} themeMode={themeMode} />
-            <DetailField label="招标 / 采购单位" value={hotspot.tenderUnit || '未披露'} icon={Building2} themeMode={themeMode} />
-            <DetailField label="BIM 类型" value={hotspot.tenderType || '未分类'} icon={Gavel} themeMode={themeMode} />
-            <DetailField label="开标时间" value={hotspot.tenderBidOpenTime ? formatDateTime(hotspot.tenderBidOpenTime) : '未披露'} icon={CalendarClock} themeMode={themeMode} />
-            <DetailField label="文件获取截止" value={hotspot.tenderDocDeadline ? formatDateTime(hotspot.tenderDocDeadline) : '未披露'} icon={TimerReset} themeMode={themeMode} />
-            <DetailField label="地点" value={hotspot.tenderAddress || '未披露'} icon={MapPin} themeMode={themeMode} />
-            <DetailField label="联系人" value={hotspot.tenderContact || '未披露'} icon={Building2} themeMode={themeMode} />
-            <DetailField label="联系电话" value={hotspot.tenderPhone || '未披露'} icon={ClipboardCheck} themeMode={themeMode} />
-            <DetailField label="邮箱" value={hotspot.tenderEmail || '未披露'} icon={Bell} themeMode={themeMode} />
+          <section className="grid gap-4 2xl:grid-cols-2">
+            <DetailFieldSection title="基础信息" subtitle="先确认这是不是我们真正要看的项目，再进入后续投标判断。" themeMode={themeMode}>
+              <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                <DetailField label="地区 / 城市" value={region} icon={MapPin} themeMode={themeMode} />
+                <DetailField label="招标 / 采购单位" value={hotspot.tenderUnit || '未披露'} icon={Building2} themeMode={themeMode} />
+                <DetailField label="BIM 类型" value={hotspot.tenderType || '未分类'} icon={Gavel} themeMode={themeMode} />
+                <DetailField label="公告阶段" value={stage?.label || hotspot.tenderNoticeType || '待判定'} icon={Layers3} themeMode={themeMode} />
+                <DetailField label="发布时间" value={published} icon={ClipboardCheck} themeMode={themeMode} />
+                <DetailField label="地点" value={hotspot.tenderAddress || '未披露'} icon={MapPin} themeMode={themeMode} />
+              </div>
+            </DetailFieldSection>
+
+            <DetailFieldSection title="投标时间与窗口" subtitle="这里优先看报名、文件领取、投标截止和开标节点，决定是不是该立即推进。" themeMode={themeMode}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DetailField label="投标截止" value={getEffectiveDeadline(hotspot) ? formatDateTime(getEffectiveDeadline(hotspot)!) : '未披露'} icon={TimerReset} themeMode={themeMode} />
+                <DetailField label="开标时间" value={hotspot.tenderBidOpenTime ? formatDateTime(hotspot.tenderBidOpenTime) : '未披露'} icon={CalendarClock} themeMode={themeMode} />
+                <DetailField label="文件获取截止" value={hotspot.tenderDocDeadline ? formatDateTime(hotspot.tenderDocDeadline) : '未披露'} icon={CalendarClock} themeMode={themeMode} />
+                <DetailField label="详情来源标签" value={detailReliability?.label || '待核验'} icon={ShieldCheck} themeMode={themeMode} />
+              </div>
+            </DetailFieldSection>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <DetailField label="服务范围" value={hotspot.tenderServiceScope || '未披露'} icon={Layers3} themeMode={themeMode} />
-            <DetailField label="资格要求" value={hotspot.tenderQualification || '未披露'} icon={ShieldCheck} themeMode={themeMode} />
+          <section className="grid gap-4 2xl:grid-cols-2">
+            <DetailFieldSection title="联系人与投标联络" subtitle="联系人、电话和邮箱优先用于判断是否值得立刻人工跟进。" themeMode={themeMode}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <DetailField label="联系人" value={hotspot.tenderContact || '未披露'} icon={Building2} themeMode={themeMode} />
+                <DetailField label="联系电话" value={hotspot.tenderPhone || '未披露'} icon={ClipboardCheck} themeMode={themeMode} />
+                <DetailField label="邮箱" value={hotspot.tenderEmail || '未披露'} icon={Bell} themeMode={themeMode} />
+                <DetailField label="项目编号" value={hotspot.tenderProjectCode || '未披露'} icon={ClipboardCheck} themeMode={themeMode} />
+              </div>
+            </DetailFieldSection>
+
+            <DetailFieldSection title="服务范围与资质" subtitle="这块用来判断项目到底偏设计、施工还是全过程咨询，以及我们是否具备对应资质。" themeMode={themeMode}>
+              <div className="grid gap-3">
+                <DetailField label="服务范围" value={hotspot.tenderServiceScope || '未披露'} icon={Layers3} themeMode={themeMode} />
+                <DetailField label="资格要求" value={hotspot.tenderQualification || '未披露'} icon={ShieldCheck} themeMode={themeMode} />
+              </div>
+            </DetailFieldSection>
           </section>
 
           <section className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
@@ -941,7 +1568,7 @@ function HotspotDetailPage({
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <section className="grid gap-4 2xl:grid-cols-[1.2fr_0.8fr]">
             <div className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>公告正文摘要</h3>
@@ -954,11 +1581,18 @@ function HotspotDetailPage({
               </p>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 2xl:sticky 2xl:top-24">
               <div className={cn('rounded-[28px] border p-5', isLight ? 'border-slate-200 bg-white/92' : 'border-white/10 bg-white/[0.04]')}>
-                <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>解析状态</h3>
+                <h3 className={cn('text-lg font-semibold', isLight ? 'text-slate-900' : 'text-white')}>字段来源可信度</h3>
+                {detailNarrative && (
+                  <div className={cn('mt-4 rounded-[22px] border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#101427]')}>
+                    <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{detailNarrative.title}</p>
+                    <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{detailNarrative.description}</p>
+                    <p className={cn('mt-3 text-sm font-medium leading-6', isLight ? 'text-slate-700' : 'text-slate-200')}>{detailNarrative.nextStep}</p>
+                  </div>
+                )}
                 <div className={cn('mt-4 space-y-3 text-sm', isLight ? 'text-slate-600' : 'text-slate-300')}>
-                  <div className="flex items-center justify-between gap-3"><span>字段来源</span><span className={cn('text-right', isLight ? 'text-slate-900' : 'text-slate-100')}>{hotspot.tenderDetailSource || '未记录'}</span></div>
+                  <div className="flex items-center justify-between gap-3"><span>字段来源</span><span className={cn('max-w-[14rem] text-right break-all', isLight ? 'text-slate-900' : 'text-slate-100')}>{hotspot.tenderDetailSource || '未记录'}</span></div>
                   <div className="flex items-center justify-between gap-3"><span>提取时间</span><span className={cn('text-right', isLight ? 'text-slate-900' : 'text-slate-100')}>{extractedAt}</span></div>
                   <div className="flex items-center justify-between gap-3"><span>监控词</span><span className={cn('text-right', isLight ? 'text-slate-900' : 'text-slate-100')}>{hotspot.keyword?.text || '临时搜索'}</span></div>
                   <div className="flex items-center justify-between gap-3"><span>详情链接</span><span className={cn('text-right', isLight ? 'text-slate-900' : 'text-slate-100')}>{detailReliability?.label || '待核验'}</span></div>
@@ -1058,11 +1692,8 @@ function HotspotCard({
   const isLight = themeMode === 'light';
   const highlightTone = isLight ? 'bg-amber-100 text-amber-800' : 'bg-amber-300/25 text-amber-50';
   const actionMeta = getOpportunityActionMeta(action, themeMode);
-  const summaryText = hotspot.summary
-    || hotspot.tenderServiceScope
-    || (hotspot.tenderUnit
-      ? `优先确认 ${hotspot.tenderUnit} 的招采条件、资质要求和投标截止节点。`
-      : '当前公告缺少单位或预算字段，建议进入详情页补齐关键信息后再判断是否跟进。');
+  const summaryText = getOpportunitySummary(hotspot);
+  const priorityReason = getOpportunityPriorityReason(hotspot);
 
   return (
     <article className={cn(
@@ -1089,20 +1720,20 @@ function HotspotCard({
                   {selected ? '已选' : '选择'}
                 </button>
               )}
-              <span className={cn('rounded-full border px-2.5 py-1', getPlatformBadgeTone(themeMode))}>{hotspot.tenderPlatform || getSourceLabel(hotspot.source)}</span>
-              <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(rank.tone, themeMode))}>{rank.label}</span>
-              {actionMeta && <span className={cn('rounded-full border px-2.5 py-1', actionMeta.tone)}>{actionMeta.label}</span>}
+              <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getPlatformBadgeTone(themeMode))}>{hotspot.tenderPlatform || getSourceLabel(hotspot.source)}</span>
+              <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(rank.tone, themeMode))}>{rank.label}</span>
+              {actionMeta && <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', actionMeta.tone)}>{actionMeta.label}</span>}
               {deadline.urgency === 'expired' && (
-                <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone('border-slate-400/20 bg-slate-500/12 text-slate-300', themeMode))}>已截止</span>
+                <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone('border-slate-400/20 bg-slate-500/12 text-slate-300', themeMode))}>已截止</span>
               )}
-              <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>
-              <span className={cn('rounded-full border px-2.5 py-1', getBadgeTone(detailReliability.tone, themeMode))}>{detailReliability.label}</span>
+              <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>
+              <span className={cn('rounded-full border px-2.5 py-1 text-[11px] tracking-[0.01em]', getBadgeTone(detailReliability.tone, themeMode))}>{detailReliability.label}</span>
             </div>
             <h3 className={cn('text-xl font-semibold leading-8', isLight ? 'text-slate-900 group-hover:text-cyan-700' : 'text-white group-hover:text-cyan-100')}>{renderHighlightedText(hotspot.title, searchText, highlightTone)}</h3>
             <div className={cn('mt-3 flex flex-wrap items-center gap-2 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>
               <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4 text-cyan-300" />{region}</span>
               <span className="hidden text-slate-600 sm:inline">/</span>
-              <span className="inline-flex items-center gap-1.5"><Building2 className="h-4 w-4 text-emerald-300" />{renderHighlightedText(hotspot.tenderUnit || '单位待补全', searchText, highlightTone)}</span>
+              <span className="inline-flex items-center gap-1.5"><Building2 className="h-4 w-4 text-emerald-300" />{renderHighlightedText(hotspot.tenderUnit || '单位待补全', searchText, highlightTone, 1)}</span>
             </div>
           </div>
 
@@ -1149,7 +1780,8 @@ function HotspotCard({
             </div>
           </div>
           <p className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{getBidAction(hotspot)}</p>
-          <p className={cn('mt-2 line-clamp-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-400')}>{renderHighlightedText(summaryText, searchText, highlightTone)}</p>
+          <p className={cn('mt-2 line-clamp-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-400')}>{renderHighlightedText(summaryText, searchText, highlightTone, 2)}</p>
+          <p className={cn('mt-3 text-xs', isLight ? 'text-slate-500' : 'text-slate-500')}>排序依据：{priorityReason}</p>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
             <span>来源：{getSourceLabel(hotspot.source)}</span>
             <span>入库：{relativeTime(hotspot.createdAt)}</span>
@@ -1632,7 +2264,29 @@ function HeaderProgress({
   queueRunning: boolean;
 }) {
   const isLight = themeMode === 'light';
-  if (progressValue <= 0 && !progressLabel && !queueRunning) return null;
+  const showExplicitProgress = progressValue > 0 || Boolean(progressLabel);
+  if (!showExplicitProgress && !queueRunning) return null;
+
+  if (!showExplicitProgress) {
+    return (
+      <div className={cn(
+        'min-w-[13rem] flex-1 rounded-[18px] border px-3 py-2 shadow-[0_10px_30px_rgba(15,23,42,0.08)]',
+        isLight ? 'border-slate-200 bg-white/88' : 'border-white/10 bg-white/[0.04]'
+      )}>
+        <div className="flex items-center gap-2.5">
+          <span className={cn(
+            'flex h-6 w-6 items-center justify-center rounded-full',
+            isLight ? 'bg-cyan-50 text-cyan-600' : 'bg-cyan-500/10 text-cyan-200'
+          )}>
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          </span>
+          <p className={cn('min-w-0 truncate text-xs', isLight ? 'text-slate-500' : 'text-slate-400')}>
+            后台队列运行中，结果会自动同步到主页
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn(
@@ -1641,24 +2295,25 @@ function HeaderProgress({
     )}>
       <div className="flex items-center gap-2.5">
         <div className={cn('h-1.5 min-w-20 flex-1 overflow-hidden rounded-full', isLight ? 'bg-slate-100' : 'bg-white/8')}>
-          <div
-            className={cn(
-              'h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#14b8a6)] transition-all duration-500',
-              queueRunning && progressValue < 100 && 'animate-pulse'
-            )}
-            style={{ width: `${Math.min(100, Math.max(progressValue, queueRunning ? 18 : 0))}%` }}
-          />
-        </div>
-        <p className={cn('min-w-0 truncate text-xs', isLight ? 'text-slate-500' : 'text-slate-400')}>
-          {queueRunning ? '队列正在抓取和解析公告' : '刷新列表与分析数据'}
-        </p>
+        <div
+          className={cn(
+            'h-full rounded-full bg-[linear-gradient(90deg,#0ea5e9,#14b8a6)] transition-all duration-500',
+            progressValue < 100 && 'animate-pulse'
+          )}
+          style={{ width: `${Math.min(100, Math.max(progressValue, 8))}%` }}
+        />
       </div>
+      <p className={cn('min-w-0 truncate text-xs', isLight ? 'text-slate-500' : 'text-slate-400')}>
+        {progressLabel || '刷新列表与分析数据'}
+      </p>
     </div>
+  </div>
   );
 }
 
 function OpportunityListSection({
   hotspots,
+  summaryHotspots,
   filters,
   onFiltersChange,
   keywords,
@@ -1670,6 +2325,7 @@ function OpportunityListSection({
   isSearchDebouncing,
   searchSuggestions,
   recentSearches,
+  onClearRecentSearches,
   savedViews,
   onSaveView,
   onApplyView,
@@ -1681,6 +2337,7 @@ function OpportunityListSection({
   actionsById,
 }: {
   hotspots: Hotspot[];
+  summaryHotspots: Hotspot[];
   filters: FilterState;
   onFiltersChange: (filters: FilterState) => void;
   keywords: Keyword[];
@@ -1692,6 +2349,7 @@ function OpportunityListSection({
   isSearchDebouncing: boolean;
   searchSuggestions: string[];
   recentSearches: string[];
+  onClearRecentSearches: () => void;
   savedViews: SavedFilterView[];
   onSaveView: () => void;
   onApplyView: (viewId: string) => void;
@@ -1709,6 +2367,48 @@ function OpportunityListSection({
 
   const showHero = currentPage === 1;
   const isLight = themeMode === 'light';
+  const [heroCollapsed, setHeroCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('bim-tender-opportunity-hero-collapsed') === 'true';
+  });
+  const viewMeta = useMemo(() => getOpportunityViewMeta(filters), [filters]);
+  const stageSummary = useMemo(() => buildOpportunityStageSummary(summaryHotspots), [summaryHotspots]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('bim-tender-opportunity-hero-collapsed', heroCollapsed ? 'true' : 'false');
+  }, [heroCollapsed]);
+
+  const summaryCards = [
+    {
+      label: '正式可跟进',
+      value: stageSummary.actionable,
+      caption: '正式公告、资格预审、变更补遗',
+      tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200',
+      icon: ShieldCheck
+    },
+    {
+      label: '前置信号',
+      value: stageSummary.preSignal,
+      caption: '采购意向、招标计划',
+      tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200',
+      icon: Radar
+    },
+    {
+      label: '紧急窗口',
+      value: stageSummary.urgent,
+      caption: '7 天内需尽快核对',
+      tone: 'border-red-400/20 bg-red-500/10 text-red-200',
+      icon: AlertTriangle
+    },
+    {
+      label: '高完整度',
+      value: stageSummary.complete,
+      caption: '字段足够直接判断',
+      tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200',
+      icon: Sparkles
+    }
+  ];
 
   return (
     <section className="space-y-4" id="opportunity-list">
@@ -1738,29 +2438,114 @@ function OpportunityListSection({
             : 'border-cyan-300/15 bg-[linear-gradient(135deg,rgba(14,165,233,0.18),rgba(15,23,42,0.9)_48%,rgba(20,184,166,0.12))]'
         )}>
           <div className="flex flex-col gap-5">
-            <div className="max-w-4xl">
-              <p className="text-xs uppercase tracking-[0.3em] text-cyan-300/75">Opportunity Pipeline</p>
-              <h2 className={cn('mt-3 text-4xl font-semibold tracking-tight sm:text-5xl', isLight ? 'text-slate-900' : 'text-white')}>投标机会清单</h2>
-              <p className={cn('mt-4 max-w-3xl text-base leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
-                以招标决策字段为核心：单位、地区、预算、截止时间、公告阶段、详情可靠性。
-              </p>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-4xl">
+                <p className="text-xs uppercase tracking-[0.3em] text-cyan-300/75">Opportunity Pipeline</p>
+                <h2 className={cn('mt-3 text-4xl font-semibold tracking-tight sm:text-5xl', isLight ? 'text-slate-900' : 'text-white')}>投标机会清单</h2>
+                <p className={cn('mt-4 max-w-3xl text-base leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                  以招标决策字段为核心：单位、地区、预算、截止时间、公告阶段、详情可靠性。
+                </p>
+              </div>
+              <button
+                onClick={() => setHeroCollapsed((prev) => !prev)}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition',
+                  isLight ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100' : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                )}
+              >
+                <ChevronDown className={cn('h-4 w-4 transition-transform', heroCollapsed && '-rotate-90')} />
+                {heroCollapsed ? '展开概览与筛选' : '收起概览与筛选'}
+              </button>
             </div>
-            <div className="w-full">
-              <FilterSortBar
-                filters={filters}
-                onChange={onFiltersChange}
-                keywords={keywords}
-                themeMode={themeMode}
-                isSearchDebouncing={isSearchDebouncing}
-                searchSuggestions={searchSuggestions}
-                recentSearches={recentSearches}
-                onSelectSearch={(value) => onFiltersChange({ ...filters, searchText: value })}
-                savedViews={savedViews}
-                onSaveView={onSaveView}
-                onApplyView={onApplyView}
-                onDeleteView={onDeleteView}
-              />
-            </div>
+
+            {!heroCollapsed ? (
+              <>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {summaryCards.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <div
+                        key={item.label}
+                        className={cn(
+                          'rounded-[24px] border p-4 shadow-[0_16px_48px_rgba(15,23,42,0.08)]',
+                          getBadgeTone(item.tone, themeMode),
+                          isLight && 'bg-white/88'
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.2em]">{item.label}</p>
+                            <p className={cn('mt-3 text-3xl font-semibold tracking-tight', isLight ? 'text-slate-900' : 'text-white')}>{item.value}</p>
+                            <p className={cn('mt-2 text-xs leading-5', isLight ? 'text-slate-500' : 'text-slate-300/80')}>{item.caption}</p>
+                          </div>
+                          <div className={cn('rounded-2xl border p-2.5', getBadgeTone(item.tone, themeMode))}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className={cn(
+                  'rounded-[26px] border px-5 py-4 shadow-[0_16px_48px_rgba(15,23,42,0.08)]',
+                  isLight ? 'border-slate-200 bg-white/88' : 'border-white/10 bg-[#0d1325]/78'
+                )}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">当前视图</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={cn('rounded-full border px-3 py-1 text-xs font-medium', getBadgeTone(viewMeta.tone, themeMode))}>{viewMeta.label}</span>
+                        {filters.searchText && (
+                          <span className={cn('rounded-full border px-3 py-1 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>
+                            搜索：{filters.searchText}
+                          </span>
+                        )}
+                      </div>
+                      <p className={cn('mt-3 max-w-3xl text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>{viewMeta.description}</p>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className={cn('rounded-2xl border px-3 py-2 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-300')}>
+                        当前页：{currentPage} / {totalPages}
+                      </div>
+                      <div className={cn('rounded-2xl border px-3 py-2 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-300')}>
+                        已加载样本：{summaryHotspots.length} 条
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="w-full">
+                  <FilterSortBar
+                    filters={filters}
+                    onChange={onFiltersChange}
+                    keywords={keywords}
+                    themeMode={themeMode}
+                    isSearchDebouncing={isSearchDebouncing}
+                    searchSuggestions={searchSuggestions}
+                    recentSearches={recentSearches}
+                    onClearRecentSearches={onClearRecentSearches}
+                    onSelectSearch={(value) => onFiltersChange({ ...filters, searchText: value })}
+                    savedViews={savedViews}
+                    onSaveView={onSaveView}
+                    onApplyView={onApplyView}
+                    onDeleteView={onDeleteView}
+                    collapseStorageKey="bim-tender-opportunity-filter-collapsed"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className={cn(
+                'rounded-[24px] border px-4 py-3 shadow-[0_16px_48px_rgba(15,23,42,0.08)]',
+                isLight ? 'border-slate-200 bg-white/88' : 'border-white/10 bg-[#0d1325]/78'
+              )}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn('rounded-full border px-3 py-1 text-xs font-medium', getBadgeTone(viewMeta.tone, themeMode))}>{viewMeta.label}</span>
+                  <span className={cn('rounded-full border px-3 py-1 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>正式可跟进 {stageSummary.actionable}</span>
+                  <span className={cn('rounded-full border px-3 py-1 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>前置信号 {stageSummary.preSignal}</span>
+                  <span className={cn('rounded-full border px-3 py-1 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>紧急窗口 {stageSummary.urgent}</span>
+                  <span className={cn('rounded-full border px-3 py-1 text-xs', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300')}>已加载 {summaryHotspots.length}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -1772,12 +2557,16 @@ function OpportunityListSection({
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-cyan-300/70">Opportunity Pipeline</p>
               <h2 className={cn('mt-1 text-xl font-semibold', isLight ? 'text-slate-900' : 'text-white')}>投标机会清单</h2>
+              <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-500' : 'text-slate-400')}>{viewMeta.description}</p>
             </div>
-            <div className={cn(
-              'rounded-full border px-3 py-1 text-xs',
-              isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300'
-            )}>
-              第 {currentPage} / {totalPages} 页
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn('rounded-full border px-3 py-1 text-xs font-medium', getBadgeTone(viewMeta.tone, themeMode))}>{viewMeta.label}</span>
+              <span className={cn(
+                'rounded-full border px-3 py-1 text-xs',
+                isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/5 text-slate-300'
+              )}>
+                第 {currentPage} / {totalPages} 页
+              </span>
             </div>
           </div>
           <FilterSortBar
@@ -1788,11 +2577,13 @@ function OpportunityListSection({
             isSearchDebouncing={isSearchDebouncing}
             searchSuggestions={searchSuggestions}
             recentSearches={recentSearches}
+            onClearRecentSearches={onClearRecentSearches}
             onSelectSearch={(value) => onFiltersChange({ ...filters, searchText: value })}
             savedViews={savedViews}
             onSaveView={onSaveView}
             onApplyView={onApplyView}
             onDeleteView={onDeleteView}
+            collapseStorageKey="bim-tender-opportunity-filter-collapsed"
           />
         </div>
       )}
@@ -2081,21 +2872,21 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
           </span>
         </div>
         {proxyPool.length > 0 ? (
-          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))]">
+          <div className="grid gap-3 xl:grid-cols-2">
             {proxyPool.map((item) => (
               <div
                 key={item.id}
                 className={cn(
-                  'min-w-0 rounded-[18px] border p-4',
+                  'min-w-0 rounded-[22px] border p-4',
                   isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-[#0f1425]'
                 )}
               >
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
-                    <p className={cn('text-sm font-medium', isLight ? 'text-slate-900' : 'text-white')}>{item.id}</p>
+                    <p className={cn('text-xl font-semibold tracking-tight', isLight ? 'text-slate-900' : 'text-white')}>{item.id}</p>
                     <p className="mt-1 text-[11px] text-slate-500">{item.host}:{item.port}</p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
                     <span className={cn('whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px]', getBadgeTone(getProxyStatusTone(item.probeStatus, item.probeOk), themeMode))}>
                       {item.probeStatusLabel}
                     </span>
@@ -2110,47 +2901,33 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
                   </div>
                 </div>
 
-                <div className={cn('mt-4 grid gap-2.5 text-[12px]', isLight ? 'text-slate-600' : 'text-slate-300')}>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>出口 IP</span>
-                    <span className={cn('min-w-0 text-right break-words', isLight ? 'text-slate-900' : 'text-white')}>{item.publicIp || '未返回'}</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>隧道状态</span>
-                    <span className="min-w-0 text-right break-words">{item.tunnelStatusLabel || '待探测'}{item.tunnelLatencyMs != null ? ` · ${item.tunnelLatencyMs} ms` : ''}</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>主动探测</span>
-                    <span className="min-w-0 text-right break-words">
-                      {item.lastProbeAt ? `${relativeTime(item.lastProbeAt)}${item.lastProbeLatencyMs != null ? ` · ${item.lastProbeLatencyMs} ms` : ''}` : '暂无'}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>当前路由</span>
-                    <span className="min-w-0 text-right break-words">{item.routingModeLabel}</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>实战成功</span>
-                    <span className="min-w-0 text-right break-words">{item.lastSuccessAt ? relativeTime(item.lastSuccessAt) : '暂无'}</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>失败统计</span>
-                    <span className="min-w-0 text-right break-words">硬失败 {item.failureCount} 次 · 软失败 {item.softFailureCount} 次</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>连续失败</span>
-                    <span className="min-w-0 text-right break-words">{item.consecutiveFailures} 次</span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>同类连续异常</span>
-                    <span className="min-w-0 text-right break-words">
-                      {item.consecutiveFailureStreak}/{item.alertThreshold}
-                      {item.consecutiveFailureLabel ? ` · ${item.consecutiveFailureLabel}` : ''}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-3">
-                    <span className={cn(isLight ? 'text-slate-500' : 'text-slate-400')}>适用来源</span>
-                    <span className="min-w-0 text-right leading-5 break-words">{formatProxySources(item.sources)}</span>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <ProxyFact label="出口 IP" value={item.publicIp || '未返回'} themeMode={themeMode} />
+                  <ProxyFact
+                    label="隧道状态"
+                    value={`${item.tunnelStatusLabel || '待探测'}${item.tunnelLatencyMs != null ? ` · ${item.tunnelLatencyMs} ms` : ''}`}
+                    themeMode={themeMode}
+                  />
+                  <ProxyFact
+                    label="主动探测"
+                    value={item.lastProbeAt ? `${relativeTime(item.lastProbeAt)}${item.lastProbeLatencyMs != null ? ` · ${item.lastProbeLatencyMs} ms` : ''}` : '暂无'}
+                    themeMode={themeMode}
+                  />
+                  <ProxyFact label="当前路由" value={item.routingModeLabel} themeMode={themeMode} />
+                  <ProxyFact label="实战成功" value={item.lastSuccessAt ? relativeTime(item.lastSuccessAt) : '暂无'} themeMode={themeMode} />
+                  <ProxyFact
+                    label="失败统计"
+                    value={`硬失败 ${item.failureCount} 次 · 软失败 ${item.softFailureCount} 次`}
+                    themeMode={themeMode}
+                  />
+                  <ProxyFact label="连续失败" value={`${item.consecutiveFailures} 次`} themeMode={themeMode} />
+                  <ProxyFact
+                    label="同类连续异常"
+                    value={`${item.consecutiveFailureStreak}/${item.alertThreshold}${item.consecutiveFailureLabel ? ` · ${item.consecutiveFailureLabel}` : ''}`}
+                    themeMode={themeMode}
+                  />
+                  <div className="sm:col-span-2">
+                    <ProxyFact label="适用来源" value={formatProxySources(item.sources)} themeMode={themeMode} />
                   </div>
                 </div>
 
@@ -2260,7 +3037,8 @@ function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
-  const appVersion = healthStatus?.version || '1.2.0';
+  const heroProgressRunRef = useRef(0);
+  const appVersion = healthStatus?.version || '读取中';
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -2268,21 +3046,31 @@ function App() {
   }, []);
 
   const beginHeroProgress = useCallback((label: string) => {
+    heroProgressRunRef.current += 1;
     setHeroProgressLabel(label);
     setHeroProgress(12);
+    return heroProgressRunRef.current;
   }, []);
 
-  const advanceHeroProgress = useCallback((value: number) => {
+  const advanceHeroProgress = useCallback((value: number, runId?: number) => {
+    if (runId != null && runId !== heroProgressRunRef.current) return;
     setHeroProgress((prev) => Math.max(prev, value));
   }, []);
 
-  const finishHeroProgress = useCallback(() => {
+  const clearHeroProgress = useCallback((runId?: number) => {
+    if (runId != null && runId !== heroProgressRunRef.current) return;
+    setHeroProgress(0);
+    setHeroProgressLabel(null);
+  }, []);
+
+  const finishHeroProgress = useCallback((runId?: number) => {
+    if (runId != null && runId !== heroProgressRunRef.current) return;
     setHeroProgress(100);
     window.setTimeout(() => {
-      setHeroProgress(0);
-      setHeroProgressLabel(null);
+      if (runId != null && runId !== heroProgressRunRef.current) return;
+      clearHeroProgress(runId);
     }, 450);
-  }, []);
+  }, [clearHeroProgress]);
 
   useEffect(() => {
     document.body.dataset.theme = themeMode;
@@ -2346,35 +3134,37 @@ function App() {
   const loadPageData = useCallback(async () => {
     setIsLoading(true);
     try {
-      beginHeroProgress('正在刷新数据…');
       const dashboardParams = buildDashboardParams(currentPage, opportunityPageSize);
       const hotspotsData = await hotspotsApi.getAll(dashboardParams);
-      advanceHeroProgress(68);
       setHotspots(hotspotsData.data);
       setTotalPages(hotspotsData.pagination.totalPages);
-      finishHeroProgress();
     } catch (error) {
       console.error('Failed to load page data:', error);
       showToast('加载列表失败', 'error');
-      setHeroProgress(0);
-      setHeroProgressLabel(null);
+      throw error;
     } finally {
       setIsLoading(false);
     }
-  }, [advanceHeroProgress, beginHeroProgress, buildDashboardParams, currentPage, finishHeroProgress, showToast]);
+  }, [buildDashboardParams, currentPage, showToast]);
 
   const loadAuxiliaryData = useCallback(async () => {
     try {
       const analyticsParams = buildDashboardParams(1, 100);
+      const healthPromise = healthApi.get();
+      void healthPromise.then((healthData) => {
+        setHealthStatus(healthData);
+      }).catch((error) => {
+        console.error('Failed to load health status:', error);
+      });
+
       const [keywordsData, analyticsData, statsData, notifData, opsData, healthData] = await Promise.all([
         keywordsApi.getAll(),
         hotspotsApi.getAll(analyticsParams),
         hotspotsApi.getStats(),
         notificationsApi.getAll({ limit: 12 }),
         hotspotsApi.getOpsSummary(),
-        healthApi.get()
+        healthPromise
       ]);
-      advanceHeroProgress(86);
 
       setKeywords(keywordsData);
       setAnalyticsHotspots(analyticsData.data);
@@ -2391,8 +3181,24 @@ function App() {
     } catch (error) {
       console.error('Failed to load auxiliary data:', error);
       showToast('加载分析数据失败', 'error');
+      throw error;
     }
-  }, [advanceHeroProgress, buildDashboardParams, showToast]);
+  }, [buildDashboardParams, showToast]);
+
+  const refreshDashboardData = useCallback(async (label = '正在刷新列表与分析数据…') => {
+    const runId = beginHeroProgress(label);
+    const [pageResult, auxResult] = await Promise.allSettled([
+      loadPageData().then(() => advanceHeroProgress(68, runId)),
+      loadAuxiliaryData().then(() => advanceHeroProgress(86, runId)),
+    ]);
+
+    if (pageResult.status === 'rejected' || auxResult.status === 'rejected') {
+      clearHeroProgress(runId);
+      return;
+    }
+
+    finishHeroProgress(runId);
+  }, [advanceHeroProgress, beginHeroProgress, clearHeroProgress, finishHeroProgress, loadAuxiliaryData, loadPageData]);
 
   const refreshOperationalStatus = useCallback(async () => {
     try {
@@ -2416,12 +3222,8 @@ function App() {
   }, [dashboardFilters]);
 
   useEffect(() => {
-    loadPageData();
-  }, [loadPageData]);
-
-  useEffect(() => {
-    loadAuxiliaryData();
-  }, [loadAuxiliaryData]);
+    refreshDashboardData();
+  }, [refreshDashboardData]);
 
   useEffect(() => {
     const intervalMs = healthStatus?.hotspotCheckQueue.running ? 8000 : 30000;
@@ -2433,8 +3235,7 @@ function App() {
 
   useEffect(() => {
     const unsubHotspot = onNewHotspot(() => {
-      loadPageData();
-      loadAuxiliaryData();
+      refreshDashboardData('正在同步最新机会…');
       showToast('发现新的 BIM 招采公告', 'success');
     });
 
@@ -2446,25 +3247,23 @@ function App() {
       unsubHotspot();
       unsubNotif();
     };
-  }, [loadAuxiliaryData, loadPageData, showToast]);
+  }, [refreshDashboardData, showToast]);
 
   const handleManualCheck = async () => {
     setIsChecking(true);
+    const runId = beginHeroProgress('后台扫描已提交…');
     try {
-      beginHeroProgress('后台扫描已提交…');
       await triggerHotspotCheck();
-      advanceHeroProgress(48);
+      advanceHeroProgress(48, runId);
       showToast('已加入后台扫描队列', 'success');
       window.setTimeout(() => {
-        loadPageData();
-        loadAuxiliaryData();
+        refreshDashboardData('正在同步扫描结果…');
       }, 4000);
-      finishHeroProgress();
+      finishHeroProgress(runId);
     } catch (error) {
       console.error(error);
       showToast('触发扫描失败', 'error');
-      setHeroProgress(0);
-      setHeroProgressLabel(null);
+      clearHeroProgress(runId);
     } finally {
       setIsChecking(false);
     }
@@ -2566,6 +3365,76 @@ function App() {
     }
   };
 
+  const markNotificationRead = useCallback(async (notificationId: string) => {
+    setNotifications(prev => prev.map(item => item.id === notificationId ? { ...item, isRead: true } : item));
+    setUnreadCount(prev => Math.max(0, prev - 1));
+    try {
+      await notificationsApi.markAsRead(notificationId);
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+      refreshOperationalStatus();
+    }
+  }, [refreshOperationalStatus]);
+
+  const handleSearchFromNotification = useCallback((notification: Notification) => {
+    const query = extractNotificationSearchText(notification);
+    if (!query) {
+      showToast('这条通知暂时没有可搜索的关键词', 'error');
+      return;
+    }
+
+    setShowNotifications(false);
+    setSelectedHotspot(null);
+    setIsDetailLoading(false);
+    setActiveTab('opportunities');
+    setCurrentPage(1);
+    setDashboardFilters({
+      ...defaultFilterState,
+      searchText: query,
+      searchMode: 'fulltext',
+    });
+    showToast(`已按“${query}”筛选机会清单`, 'success');
+  }, [showToast]);
+
+  const handleOpenHotspotDetailById = useCallback(async (hotspotId: string) => {
+    const knownHotspot = [...hotspots, ...analyticsHotspots, ...searchResults].find((item) => item.id === hotspotId);
+    if (knownHotspot) {
+      await handleOpenHotspotDetail(knownHotspot);
+      return;
+    }
+
+    setSelectedHotspot(null);
+    setIsDetailLoading(true);
+    try {
+      const detail = await hotspotsApi.getById(hotspotId);
+      setSelectedHotspot(detail);
+    } catch (error) {
+      console.error('Failed to open hotspot detail by notification:', error);
+      showToast('通知对应的项目详情暂时无法读取，已改为筛选该线索。', 'error');
+      const fallback = notifications.find((item) => item.hotspotId === hotspotId);
+      if (fallback) {
+        handleSearchFromNotification(fallback);
+      }
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }, [analyticsHotspots, handleOpenHotspotDetail, handleSearchFromNotification, hotspots, notifications, searchResults, showToast]);
+
+  const handleNotificationClick = useCallback(async (notification: Notification) => {
+    setShowNotifications(false);
+    if (!notification.isRead) {
+      void markNotificationRead(notification.id);
+    }
+
+    setActiveTab('opportunities');
+    if (notification.hotspotId) {
+      await handleOpenHotspotDetailById(notification.hotspotId);
+      return;
+    }
+
+    handleSearchFromNotification(notification);
+  }, [handleOpenHotspotDetailById, handleSearchFromNotification, markNotificationRead]);
+
   const filteredSearchResults = useMemo(() => {
     let results = [...searchResults];
     if (searchFilters.searchText.trim()) {
@@ -2604,7 +3473,7 @@ function App() {
     const query = dashboardFilters.searchText.trim().toLowerCase();
     const pool = [...dashboardRecentSearches, ...keywords.map((item) => item.text)];
     const unique = Array.from(new Set(pool));
-    if (!query) return unique.slice(0, 6);
+    if (!query) return [];
     return unique.filter((item) => item.toLowerCase().includes(query)).slice(0, 6);
   }, [dashboardFilters.searchText, dashboardRecentSearches, keywords]);
 
@@ -2612,9 +3481,19 @@ function App() {
     const query = searchFilters.searchText.trim().toLowerCase();
     const pool = [...manualRecentSearches, ...keywords.map((item) => item.text)];
     const unique = Array.from(new Set(pool));
-    if (!query) return unique.slice(0, 6);
+    if (!query) return [];
     return unique.filter((item) => item.toLowerCase().includes(query)).slice(0, 6);
   }, [keywords, manualRecentSearches, searchFilters.searchText]);
+
+  const handleClearDashboardRecentSearches = useCallback(() => {
+    setDashboardRecentSearches([]);
+    showToast('已清空首页最近搜索', 'success');
+  }, [showToast]);
+
+  const handleClearManualRecentSearches = useCallback(() => {
+    setManualRecentSearches([]);
+    showToast('已清空临时搜索记录', 'success');
+  }, [showToast]);
 
   const directSearchSuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -2680,6 +3559,12 @@ function App() {
   const budgetBuckets = useMemo(() => buildBudgetBuckets(analyticsHotspots), [analyticsHotspots]);
   const deadlineBuckets = useMemo(() => buildDeadlineBuckets(analyticsHotspots), [analyticsHotspots]);
   const typeBuckets = useMemo(() => buildTenderTypeBuckets(analyticsHotspots), [analyticsHotspots]);
+  const stageBuckets = useMemo(() => buildStageBuckets(analyticsHotspots), [analyticsHotspots]);
+  const trendPoints = useMemo(() => buildTrendPoints(analyticsHotspots), [analyticsHotspots]);
+  const businessReadouts = useMemo(
+    () => buildBusinessReadouts(analyticsHotspots, regionBuckets, budgetBuckets, typeBuckets),
+    [analyticsHotspots, regionBuckets, budgetBuckets, typeBuckets]
+  );
   const sourceShare = useMemo(() => {
     const sourceEntries = Object.entries(stats?.bySource || {}).map(([label, value]) => ({ label: getSourceLabel(label), value }));
     return sourceEntries.sort((a, b) => b.value - a.value);
@@ -2707,6 +3592,7 @@ function App() {
     const now = Date.now();
     const sevenDays = now + 7 * 24 * 60 * 60 * 1000;
     const knownBudgetItems = analyticsHotspots.filter(item => item.tenderBudgetWan != null);
+    const stageSummary = buildOpportunityStageSummary(analyticsHotspots);
     const deadlineRisk = analyticsHotspots.filter(item => {
       const effective = getEffectiveDeadline(item);
       if (!effective) return false;
@@ -2723,15 +3609,65 @@ function App() {
     const totalBudgetWan = knownBudgetItems.reduce((sum, item) => sum + (item.tenderBudgetWan || 0), 0);
     const completeRows = analyticsHotspots.filter(item => item.tenderUnit && item.tenderRegion && item.tenderNoticeType).length;
     const completeness = analyticsHotspots.length ? Math.round((completeRows / analyticsHotspots.length) * 100) : 0;
+    const strongestSource = opsSummary?.sourceQuality?.length
+      ? [...opsSummary.sourceQuality].sort((a, b) => b.qualityScore - a.qualityScore || b.activeCount - a.activeCount)[0]
+      : null;
+    const weakestSource = opsSummary?.sourceQuality?.length
+      ? [...opsSummary.sourceQuality].sort((a, b) => a.qualityScore - b.qualityScore || b.dirtyIssueCount - a.dirtyIssueCount)[0]
+      : null;
 
     return {
       activeOpportunity,
       deadlineRisk,
       totalBudgetWan,
       knownBudgetCount: knownBudgetItems.length,
-      completeness
+      completeness,
+      stageSummary,
+      strongestSource,
+      weakestSource
     };
-  }, [analyticsHotspots]);
+  }, [analyticsHotspots, opsSummary]);
+
+  const dashboardInsightCards = useMemo(() => {
+    const strongestSourceLabel = analysisSnapshot.strongestSource ? getSourceLabel(analysisSnapshot.strongestSource.source) : '待评估';
+    const weakestSourceLabel = analysisSnapshot.weakestSource ? getSourceLabel(analysisSnapshot.weakestSource.source) : '待评估';
+    return [
+      {
+        title: '正式机会',
+        value: `${analysisSnapshot.stageSummary.actionable}`,
+        caption: analysisSnapshot.deadlineRisk > 0
+          ? `其中 ${analysisSnapshot.deadlineRisk} 条在 7 天内要完成窗口确认。`
+          : '当前正式机会都还没有进入紧急窗口。',
+        icon: ShieldCheck,
+        tone: 'border-cyan-400/20 bg-cyan-500/10 text-cyan-200'
+      },
+      {
+        title: '前置信号',
+        value: `${analysisSnapshot.stageSummary.preSignal}`,
+        caption: '适合作为 BD 提前布局池，不和正式公告混排判断。',
+        icon: Radar,
+        tone: 'border-amber-300/25 bg-amber-400/12 text-amber-200'
+      },
+      {
+        title: '最佳来源',
+        value: strongestSourceLabel,
+        caption: analysisSnapshot.strongestSource
+          ? `质量分 ${analysisSnapshot.strongestSource.qualityScore}，可跟进 ${analysisSnapshot.strongestSource.activeCount} 条。`
+          : '等待来源质量样本回传。',
+        icon: Sparkles,
+        tone: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+      },
+      {
+        title: '优先治理',
+        value: weakestSourceLabel,
+        caption: analysisSnapshot.weakestSource
+          ? `质量分 ${analysisSnapshot.weakestSource.qualityScore}，脏值 ${analysisSnapshot.weakestSource.dirtyIssueCount} 条。`
+          : '当前来源治理状态良好。',
+        icon: AlertTriangle,
+        tone: 'border-orange-300/25 bg-orange-400/12 text-orange-200'
+      }
+    ];
+  }, [analysisSnapshot]);
 
   return (
     <div className={cn(
@@ -2824,7 +3760,7 @@ function App() {
                 {themeMode === 'light' ? '切回深色' : '浅色主题'}
               </button>
               <button
-                onClick={() => { loadPageData(); loadAuxiliaryData(); }}
+                onClick={() => { refreshDashboardData(); }}
                 className={cn(
                   'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent',
                   themeMode === 'light'
@@ -2869,7 +3805,7 @@ function App() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 8, scale: 0.96 }}
                       className={cn(
-                        'absolute right-0 top-14 z-50 w-[22rem] rounded-[28px] border p-4 shadow-[0_24px_80px_rgba(0,0,0,0.4)] backdrop-blur-2xl',
+                        'absolute right-0 top-14 z-50 flex max-h-[min(70vh,32rem)] w-[22rem] flex-col overflow-hidden rounded-[28px] border p-4 shadow-[0_24px_80px_rgba(0,0,0,0.4)] backdrop-blur-2xl',
                         themeMode === 'light' ? 'border-slate-200 bg-white/96' : 'border-white/10 bg-[#0b1324]/96'
                       )}
                     >
@@ -2879,7 +3815,7 @@ function App() {
                           <button onClick={handleMarkAllRead} className="text-xs text-cyan-300 hover:text-cyan-200">全部已读</button>
                         )}
                       </div>
-                      <div className="space-y-3">
+                      <div className="space-y-3 overflow-y-auto pr-1">
                         {notifications.length === 0 && (
                           <div className={cn(
                             'rounded-2xl border border-dashed p-4 text-sm',
@@ -2889,15 +3825,37 @@ function App() {
                           </div>
                         )}
                         {notifications.slice(0, 6).map(item => (
-                          <div key={item.id} className={cn(
-                            'rounded-2xl border p-3 text-sm',
-                            item.isRead
-                              ? (themeMode === 'light' ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/5 bg-white/[0.03] text-slate-500')
-                              : (themeMode === 'light' ? 'border-cyan-200 bg-cyan-50 text-slate-700' : 'border-cyan-400/10 bg-cyan-500/[0.06] text-slate-200')
-                          )}>
-                            <p className="font-medium">{item.title}</p>
-                            <p className="mt-1 line-clamp-2 text-xs">{item.content}</p>
-                          </div>
+                          <button
+                            key={item.id}
+                            onClick={() => { void handleNotificationClick(item); }}
+                            className={cn(
+                              'block w-full rounded-2xl border p-3 text-left text-sm transition',
+                              item.isRead
+                                ? (themeMode === 'light'
+                                  ? 'border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white'
+                                  : 'border-white/5 bg-white/[0.03] text-slate-500 hover:border-white/10 hover:bg-white/[0.05]')
+                                : (themeMode === 'light'
+                                  ? 'border-cyan-200 bg-cyan-50 text-slate-700 hover:border-cyan-300 hover:bg-cyan-100/70'
+                                  : 'border-cyan-400/10 bg-cyan-500/[0.06] text-slate-200 hover:border-cyan-400/20 hover:bg-cyan-500/[0.1]')
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-medium">{item.title}</p>
+                                <p className="mt-1 line-clamp-2 text-xs">{item.content}</p>
+                              </div>
+                              <ArrowRight className={cn(
+                                'mt-0.5 h-4 w-4 shrink-0',
+                                themeMode === 'light' ? 'text-slate-400' : 'text-slate-500'
+                              )} />
+                            </div>
+                            <p className={cn(
+                              'mt-2 text-[11px]',
+                              themeMode === 'light' ? 'text-slate-400' : 'text-slate-500'
+                            )}>
+                              {item.hotspotId ? '点击直达项目详情' : '点击按关键词筛选主页机会'}
+                            </p>
+                          </button>
                         ))}
                       </div>
                     </motion.div>
@@ -2949,9 +3907,10 @@ function App() {
         )}
 
         {!selectedHotspot && activeTab === 'opportunities' && (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.7fr)]">
+          <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.7fr)]">
             <OpportunityListSection
               hotspots={hotspots}
+              summaryHotspots={analyticsHotspots}
               filters={dashboardFilters}
               onFiltersChange={setDashboardFilters}
               keywords={keywords}
@@ -2963,6 +3922,7 @@ function App() {
               isSearchDebouncing={isSearchDebouncing}
               searchSuggestions={dashboardSearchSuggestions}
               recentSearches={dashboardRecentSearches}
+              onClearRecentSearches={handleClearDashboardRecentSearches}
               savedViews={savedFilterViews}
               onSaveView={handleSaveCurrentView}
               onApplyView={handleApplyView}
@@ -3005,7 +3965,7 @@ function App() {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className={cn('text-sm font-medium leading-6', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{item.title}</p>
+                            <p className={cn('line-clamp-3 text-sm font-medium leading-6', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>{item.title}</p>
                             <p className="mt-2 text-xs text-slate-500">{item.tenderUnit || '单位待补全'}</p>
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
                               <span className={cn('rounded-full border px-2 py-1', getBadgeTone(stage.tone, themeMode))}>{stage.label}</span>
@@ -3053,7 +4013,18 @@ function App() {
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <DashboardMetric title="总公告" value={stats?.total ?? 0} caption="当前数据库中已沉淀的 BIM 招采公告" tone="border-cyan-400/15 bg-[linear-gradient(180deg,rgba(14,165,233,0.16),rgba(14,165,233,0.04))]" icon={Layers3} themeMode={themeMode} />
+              <DashboardMetric
+                title="招采公告"
+                value={stats?.monitoredTotal ?? stats?.total ?? 0}
+                caption={
+                  stats?.legacyTotal
+                    ? `当前 7 个招采源共 ${stats.monitoredTotal ?? stats.total} 条；另有 ${stats.legacyTotal} 条旧版泛热点历史样本仍保留在库内。`
+                    : '当前 7 个招采源已沉淀的 BIM 招采公告。'
+                }
+                tone="border-cyan-400/15 bg-[linear-gradient(180deg,rgba(14,165,233,0.16),rgba(14,165,233,0.04))]"
+                icon={Layers3}
+                themeMode={themeMode}
+              />
               <DashboardMetric title="今日新增" value={stats?.today ?? 0} caption="当天新发现，可直接作为跟进入口" tone="border-emerald-400/15 bg-[linear-gradient(180deg,rgba(16,185,129,0.16),rgba(16,185,129,0.04))]" icon={Sparkles} themeMode={themeMode} />
               <DashboardMetric title="紧急机会" value={stats?.urgent ?? 0} caption="高优先级项目，需要尽快人工确认" tone="border-red-400/15 bg-[linear-gradient(180deg,rgba(239,68,68,0.16),rgba(239,68,68,0.04))]" icon={AlertTriangle} themeMode={themeMode} />
               <DashboardMetric title="活跃监控词" value={keywords.filter(item => item.isActive).length} caption="当前参与自动扫描的 BIM 关键词数量" tone="border-amber-300/15 bg-[linear-gradient(180deg,rgba(251,191,36,0.14),rgba(251,191,36,0.04))]" icon={Target} themeMode={themeMode} />
@@ -3114,6 +4085,43 @@ function App() {
               <AIQualityCard summary={opsSummary} themeMode={themeMode} />
             </section>
 
+            <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+              <section className={cn(
+                'rounded-[32px] border p-6 shadow-[0_24px_100px_rgba(0,0,0,0.3)]',
+                themeMode === 'light'
+                  ? 'border-slate-200 bg-[linear-gradient(135deg,rgba(14,165,233,0.05),rgba(255,255,255,0.96),rgba(20,184,166,0.04))]'
+                  : 'border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.88),rgba(8,47,73,0.84))]'
+              )}>
+                <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.28em] text-cyan-300/80">Business Signal</p>
+                    <h3 className={cn('mt-2 text-2xl font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>业务判断摘要</h3>
+                    <p className={cn('mt-2 text-sm leading-7', themeMode === 'light' ? 'text-slate-500' : 'text-slate-300/85')}>
+                      这块不再只报总量，而是先告诉我们当前到底该优先看正式机会、前置信号，还是来源治理问题。
+                    </p>
+                  </div>
+                  <span className={cn('rounded-full border px-3 py-1.5 text-xs', themeMode === 'light' ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
+                    样本 {analyticsHotspots.length} 条
+                  </span>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {dashboardInsightCards.map((item) => (
+                    <AnalysisCard
+                      key={item.title}
+                      title={item.title}
+                      value={item.value}
+                      caption={item.caption}
+                      icon={item.icon}
+                      tone={item.tone}
+                      themeMode={themeMode}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              <SourceQualityComparePanel summary={opsSummary} themeMode={themeMode} />
+            </section>
+
             <SourceQualityPanel summary={opsSummary} themeMode={themeMode} />
 
             <SourceGovernancePanel summary={opsSummary} themeMode={themeMode} />
@@ -3130,7 +4138,7 @@ function App() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.28em] text-emerald-300/75">Data Analysis</p>
                   <h3 className={cn('mt-2 text-2xl font-semibold', themeMode === 'light' ? 'text-slate-900' : 'text-white')}>数据分析快照</h3>
-                  <p className={cn('mt-2 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>基于当前筛选条件下最近 100 条公告计算，先给业务判断方向，后面再升级趋势图。</p>
+                  <p className={cn('mt-2 text-sm', themeMode === 'light' ? 'text-slate-500' : 'text-slate-400')}>基于当前筛选条件下最近 100 条公告计算，先看结构、再看趋势、最后落到业务动作。</p>
                 </div>
                 <span className={cn('rounded-full border px-3 py-1.5 text-xs', themeMode === 'light' ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/5 text-slate-400')}>
                   样本 {analyticsHotspots.length} 条
@@ -3172,7 +4180,23 @@ function App() {
               </div>
             </section>
 
+            <section className="grid gap-5 2xl:grid-cols-[1.15fr_0.85fr]">
+              <TrendPanel
+                title="近 7 天机会走势"
+                subtitle="把新机会、前置信号、已截止和优先跟进池拆开看，避免只盯总量。"
+                points={trendPoints}
+                themeMode={themeMode}
+              />
+              <ReadoutPanel
+                title="业务化解读"
+                subtitle="把预算、地区、BIM 类型和机会结构翻译成更容易做决策的话。"
+                items={businessReadouts}
+                themeMode={themeMode}
+              />
+            </section>
+
             <section className="grid gap-5 xl:grid-cols-2">
+              <DataBars title="公告阶段" subtitle="先分清正式可投标、前置信号、变更复核和归档信息。" data={stageBuckets} tone="bg-[linear-gradient(90deg,#22d3ee,#14b8a6)]" themeMode={themeMode} />
               <DataBars title="来源贡献" subtitle="看哪几个来源在稳定产出项目。" data={sourceShare} tone="bg-[linear-gradient(90deg,#22d3ee,#38bdf8)]" themeMode={themeMode} />
               <DataBars title="地区分布" subtitle="当前筛选条件下，项目主要集中在哪些城市。" data={regionBuckets} tone="bg-[linear-gradient(90deg,#f59e0b,#f97316)]" themeMode={themeMode} />
             </section>
@@ -3332,7 +4356,9 @@ function App() {
                 themeMode={themeMode}
                 searchSuggestions={manualSearchSuggestions}
                 recentSearches={manualRecentSearches}
+                onClearRecentSearches={handleClearManualRecentSearches}
                 onSelectSearch={(value) => setSearchFilters((prev) => ({ ...prev, searchText: value }))}
+                collapseStorageKey="bim-tender-manual-filter-collapsed"
               />
             </section>
 

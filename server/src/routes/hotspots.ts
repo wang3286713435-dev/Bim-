@@ -445,11 +445,13 @@ router.get('/stats', async (req, res) => {
     today.setHours(0, 0, 0, 0);
 
     const [
+      totalHotspotsAll,
       totalHotspots,
       todayHotspots,
       urgentHotspots,
       sourceStats
     ] = await Promise.all([
+      prisma.hotspot.count(),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({
         where: { source: { in: TENDER_SOURCES }, createdAt: { gte: today } }
@@ -465,7 +467,10 @@ router.get('/stats', async (req, res) => {
     ]);
 
     res.json({
+      totalAll: totalHotspotsAll,
       total: totalHotspots,
+      monitoredTotal: totalHotspots,
+      legacyTotal: Math.max(0, totalHotspotsAll - totalHotspots),
       today: todayHotspots,
       urgent: urgentHotspots,
       bySource: sourceStats.reduce((acc: Record<string, number>, item: { source: string; _count: { source: number } }) => {

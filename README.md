@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.5.4`（生产热修：公告阶段误判修正 + v1.5 正式收口）
+- `v1.6.5`（热修：机会面板可折叠 + 最近搜索精简 + 代理路由口径修正）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -138,6 +138,45 @@ npm run start
 
 - 应用首页：[http://localhost:3001](http://localhost:3001)
 - 健康检查：[http://localhost:3001/api/health](http://localhost:3001/api/health)
+
+## 生产部署
+
+推荐统一使用仓库自带脚本，避免把本地 SQLite 数据库、`.env`、`.secrets`、构建产物误同步到生产机：
+
+```bash
+cd /Users/Weishengsu/dev/yupi-hot-monitor
+./scripts/deploy_production.sh
+```
+
+可选参数：
+
+```bash
+./scripts/deploy_production.sh root@134.175.238.186
+```
+
+脚本默认会：
+
+- 先备份生产目录到 `/opt/bim-tender-backups/<timestamp>/`
+- `rsync` 同步代码，但明确排除：
+  - `server/prisma/dev.db`
+  - `server/prisma/dev.db-journal`
+  - `server/.env`
+  - `.secrets`
+  - `client/dist`
+  - `server/dist`
+- 在服务器上重新构建前后端
+- 重启 `bim-tender.service`
+- 最后打印 `/api/health`
+
+如果需要覆盖默认值，可以设置这些环境变量：
+
+```bash
+DEPLOY_HOST=root@134.175.238.186
+DEPLOY_REMOTE_DIR=/opt/bim-tender
+DEPLOY_SERVICE=bim-tender.service
+DEPLOY_OWNER=admin:admin
+DEPLOY_RUN_USER=admin
+```
 
 ## 常用命令
 

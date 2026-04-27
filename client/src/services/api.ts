@@ -75,6 +75,9 @@ export interface Notification {
 
 export interface Stats {
   total: number;
+  totalAll?: number;
+  monitoredTotal?: number;
+  legacyTotal?: number;
   today: number;
   urgent: number;
   bySource: Record<string, number>;
