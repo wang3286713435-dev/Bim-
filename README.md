@@ -100,6 +100,10 @@ cp server/.env.example server/.env
 PORT=3001
 AI_PROVIDER=openclaw
 OPENCLAW_AGENT_ID=bim-tender
+OPENCLAW_ANALYSIS_AGENT_ID=main
+OPENCLAW_ANALYSIS_LOCAL=true
+OPENCLAW_DETAIL_AGENT_ID=bim-tender
+OPENCLAW_DETAIL_LOCAL=false
 OPENCLAW_BIN=/Users/yourname/.openclaw/bin/openclaw
 OPENCLAW_TIMEOUT_MS=180000
 
@@ -110,6 +114,13 @@ FEISHU_APP_SECRET=
 FEISHU_BITABLE_APP_TOKEN=
 FEISHU_BITABLE_TABLE_ID=
 ```
+
+推荐口径：
+
+- `OPENCLAW_ANALYSIS_AGENT_ID=main`：列表相关性判断走更轻、更稳的分析 agent。
+- `OPENCLAW_ANALYSIS_LOCAL=true`：服务端分析优先跳过 gateway，直接走本地 runtime，减少超时和 session 抖动。
+- `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
+- `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
 
 ### 本地开发
 

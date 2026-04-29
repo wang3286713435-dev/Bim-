@@ -16,6 +16,7 @@ export interface Hotspot {
   content: string;
   url: string;
   source: string;
+  sourceScope?: 'monitored' | 'legacy';
   sourceId: string | null;
   isReal: boolean;
   relevance: number;
@@ -81,6 +82,7 @@ export interface Stats {
   today: number;
   urgent: number;
   bySource: Record<string, number>;
+  legacyBySource?: Record<string, number>;
 }
 
 export interface SourceHealthProbe {
@@ -175,6 +177,9 @@ export interface SourceSetting {
 export interface OpsSummary {
   stats: {
     totalHotspots: number;
+    monitoredHotspots?: number;
+    legacyHotspots?: number;
+    totalHotspotsAll?: number;
     todayHotspots: number;
   };
   quality: {
@@ -461,6 +466,7 @@ export const hotspotsApi = {
     searchText?: string;
     searchMode?: 'title' | 'fulltext';
     includeExpired?: 'true' | 'false';
+    scope?: 'monitored' | 'legacy' | 'all';
     source?: string; 
     tenderStage?: string;
     importance?: string; 

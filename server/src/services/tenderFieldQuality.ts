@@ -57,6 +57,8 @@ export function cleanTenderUnit(value: unknown): string | null {
   if (/^(万元|元|预算金额|采购单位|招标人|采购人|招标代理|代理机构|与招标代理|信息|公告信息|详见公告)$/.test(cleaned)) return null;
   if (STRUCTURED_POLLUTION_PATTERN.test(cleaned)) return null;
   if (/(中小企业采购|潜在投标人|潜在供应商|潜在申请人|资格要求|详见|应当专门面向)/.test(cleaned)) return null;
+  if (/(\.pdf|授权代表证明书|招标申请函|提供的项目基础资料|设计任务书|工程管理要求|声明\.pdf|项目概况及招标范围)/i.test(cleaned)) return null;
+  if (/[；;。]/.test(cleaned) && cleaned.length > 24) return null;
   if (PHONE_PATTERN.test(cleaned)) return null;
   return cleaned;
 }
@@ -92,6 +94,7 @@ export function cleanTenderContact(value: unknown): string | null {
   if (!withoutPhone || withoutPhone.length < 2 || withoutPhone.length > 30) return null;
   if (/^(张三|李四|王五|测试|联系人|项目联系人|采购联系人|招标联系人|无|暂无|详见公告|详见)$/.test(withoutPhone)) return null;
   if (/(项目名称|预算金额|采购需求|联系电话|联系方式|联系地址|招标代理|采购代理|资格要求|详见|地址)/.test(withoutPhone)) return null;
+  if (/(证书|合格|授权|声明|申请函|投标人|投标文件|资格)/.test(withoutPhone)) return null;
   if (/^\d+$/.test(withoutPhone)) return null;
   return withoutPhone;
 }

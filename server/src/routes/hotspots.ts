@@ -33,6 +33,7 @@ import { isFeishuWebhookEnabled, notifyFeishuWebhook } from '../services/feishu.
 const router = Router();
 const TENDER_SOURCES = TENDER_SOURCE_IDS;
 const DEFAULT_SOURCE_SET = new Set<string>(DEFAULT_TENDER_SOURCE_IDS);
+const MONITORED_SOURCE_SET = new Set<string>(TENDER_SOURCES);
 
 const SOURCE_CANDIDATE_POOL = [
   {
@@ -87,6 +88,24 @@ function getEffectiveDeadlineTime(item: {
     if (Number.isFinite(time)) return time;
   }
   return null;
+}
+
+function isMonitoredSource(source: string | null | undefined): boolean {
+  return Boolean(source && MONITORED_SOURCE_SET.has(source));
+}
+
+function resolveSourceScope(input: {
+  source?: string | null;
+  scope?: string | null;
+  includeLegacy?: string | null;
+}): 'monitored' | 'legacy' | 'all' {
+  if (input.source) {
+    return isMonitoredSource(input.source) ? 'monitored' : 'legacy';
+  }
+
+  if (input.scope === 'legacy') return 'legacy';
+  if (input.scope === 'all' || input.includeLegacy === 'true') return 'all';
+  return 'monitored';
 }
 
 function buildRepairHints(input: {
@@ -166,6 +185,7 @@ function getSourceProxyPolicy(sourceId: string, proxyPool: ReturnType<typeof get
 }
 
 function decorateHotspotRecord<T extends {
+  source?: string | null;
   tenderNoticeType?: string | null;
   title?: string | null;
   content?: string | null;
@@ -178,6 +198,7 @@ function decorateHotspotRecord<T extends {
 
   return {
     ...record,
+    sourceScope: isMonitoredSource(record.source) ? 'monitored' : 'legacy',
     tenderStageCategory: stage.category,
     tenderStageLabel: stage.label,
     tenderStageBucket: stage.bucket,
@@ -222,6 +243,7 @@ router.get('/', async (req, res) => {
       tenderDeadlineFrom,
       tenderDeadlineTo,
       tenderPlatform,
+      scope,
       includeLegacy,
       sortBy = 'createdAt',
       sortOrder = 'desc'
@@ -233,10 +255,18 @@ router.get('/', async (req, res) => {
 
     const where: any = {};
     const andConditions: any[] = [];
+    const scopeValue = resolveSourceScope({
+      source: getQueryString(source),
+      scope: getQueryString(scope),
+      includeLegacy: getQueryString(includeLegacy)
+    });
+
     if (source) {
       where.source = source;
-    } else if (includeLegacy !== 'true') {
+    } else if (scopeValue === 'monitored') {
       where.source = { in: TENDER_SOURCES };
+    } else if (scopeValue === 'legacy') {
+      where.source = { notIn: TENDER_SOURCES };
     }
     if (importance) where.importance = importance;
     if (keywordId) where.keywordId = keywordId;
@@ -424,6 +454,7 @@ router.get('/', async (req, res) => {
     const total = shouldFetchAll ? filteredRawHotspots.length : await prisma.hotspot.count({ where });
 
     res.json({
+      scope: scopeValue,
       data: hotspots.map((item) => decorateHotspotRecord(item)),
       pagination: {
         page: pageNum,
@@ -449,7 +480,8 @@ router.get('/stats', async (req, res) => {
       totalHotspots,
       todayHotspots,
       urgentHotspots,
-      sourceStats
+      sourceStats,
+      legacySourceStats
     ] = await Promise.all([
       prisma.hotspot.count(),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
@@ -463,6 +495,11 @@ router.get('/stats', async (req, res) => {
         by: ['source'],
         where: { source: { in: TENDER_SOURCES } },
         _count: { source: true }
+      }),
+      prisma.hotspot.groupBy({
+        by: ['source'],
+        where: { source: { notIn: TENDER_SOURCES } },
+        _count: { source: true }
       })
     ]);
 
@@ -474,6 +511,10 @@ router.get('/stats', async (req, res) => {
       today: todayHotspots,
       urgent: urgentHotspots,
       bySource: sourceStats.reduce((acc: Record<string, number>, item: { source: string; _count: { source: number } }) => {
+        acc[item.source] = item._count.source;
+        return acc;
+      }, {} as Record<string, number>),
+      legacyBySource: legacySourceStats.reduce((acc: Record<string, number>, item: { source: string; _count: { source: number } }) => {
         acc[item.source] = item._count.source;
         return acc;
       }, {} as Record<string, number>)
@@ -495,6 +536,7 @@ router.get('/ops/summary', async (req, res) => {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const [
+      totalHotspotsAll,
       totalHotspots,
       todayHotspots,
       latestRun,
@@ -506,6 +548,7 @@ router.get('/ops/summary', async (req, res) => {
       recentAiAnalysisLogs,
       latestAiAnalysisLog
     ] = await Promise.all([
+      prisma.hotspot.count(),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES } } }),
       prisma.hotspot.count({ where: { source: { in: TENDER_SOURCES }, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } }),
       prisma.crawlRun.findFirst({
@@ -1224,6 +1267,9 @@ router.get('/ops/summary', async (req, res) => {
     res.json({
       stats: {
         totalHotspots,
+        monitoredHotspots: totalHotspots,
+        legacyHotspots: Math.max(0, totalHotspotsAll - totalHotspots),
+        totalHotspotsAll,
         todayHotspots
       },
       quality: qualitySummary,

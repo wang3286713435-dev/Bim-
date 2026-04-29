@@ -537,6 +537,37 @@ function isFallbackAIReason(reason: string | null): boolean {
     || reason.includes('默认分数');
 }
 
+function getAIInsight(reason: string | null): { label: string; text: string; mode: 'ai' | 'fallback' } | null {
+  const normalized = reason?.trim();
+  if (!normalized) return null;
+
+  if (!isFallbackAIReason(normalized)) {
+    return {
+      label: 'AI 判定',
+      text: normalized,
+      mode: 'ai'
+    };
+  }
+
+  const fallbackReason = normalized.includes('规则判断：')
+    ? normalized.split('规则判断：')[1]
+    : normalized
+      .replace(/^未配置 AI 服务，使用规则投标分析[；;]?\s*/, '')
+      .replace(/^AI 分析失败，使用规则投标分析[；;]?\s*/, '')
+      .replace(/^AI 分析超时或失败，使用规则投标分析[；;]?\s*/, '')
+      .replace(/^未配置 AI 服务，使用默认分数[；;]?\s*/, '')
+      .replace(/^AI 分析失败，使用默认分数[；;]?\s*/, '');
+
+  return {
+    label: '规则回退',
+    text: (fallbackReason
+      .replace(/，/g, '；')
+      .replace(/\s+/g, ' ')
+      .trim()) || '本轮 AI 超时或异常，已回退到规则判断。',
+    mode: 'fallback'
+  };
+}
+
 function getEffectiveDeadline(hotspot: Pick<Hotspot, 'tenderDeadline' | 'tenderBidOpenTime' | 'tenderDocDeadline'>): string | null {
   return hotspot.tenderDeadline || hotspot.tenderBidOpenTime || hotspot.tenderDocDeadline || null;
 }
@@ -1688,7 +1719,7 @@ function HotspotCard({
   const rank = getOpportunityRank(hotspot);
   const region = [hotspot.tenderRegion, hotspot.tenderCity].filter(Boolean).join(' / ') || '未标注';
   const published = hotspot.publishedAt ? formatDateTime(hotspot.publishedAt) : '未披露';
-  const aiReason = isFallbackAIReason(hotspot.relevanceReason) ? null : hotspot.relevanceReason;
+  const aiInsight = getAIInsight(hotspot.relevanceReason);
   const isLight = themeMode === 'light';
   const highlightTone = isLight ? 'bg-amber-100 text-amber-800' : 'bg-amber-300/25 text-amber-50';
   const actionMeta = getOpportunityActionMeta(action, themeMode);
@@ -1788,9 +1819,15 @@ function HotspotCard({
           </div>
         </div>
 
-        {aiReason && (
-          <div className={cn('rounded-2xl border p-3 text-sm', isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-400/10 bg-cyan-500/[0.06] text-cyan-100')}>
-            AI 辅助判断：{aiReason}
+        {aiInsight && (
+          <div className={cn(
+            'rounded-2xl border p-3 text-sm',
+            aiInsight.mode === 'fallback'
+              ? (isLight ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-amber-300/15 bg-amber-400/[0.08] text-amber-100')
+              : (isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-400/10 bg-cyan-500/[0.06] text-cyan-100')
+          )}>
+            <span className="font-medium">{aiInsight.label}：</span>
+            {aiInsight.text}
           </div>
         )}
       </div>
@@ -2721,6 +2758,11 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
       value: health?.hotspotCheckQueue.lastFinishedAt ? relativeTime(health.hotspotCheckQueue.lastFinishedAt) : '暂无',
       tone: isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/5 text-slate-200',
     },
+    {
+      label: '历史样本',
+      value: `${summary?.stats.legacyHotspots ?? 0} 条`,
+      tone: isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/5 text-slate-200',
+    },
   ];
   const totalProbeFailures = summary ? Object.values(summary.probeFailureSummary24h || summary.failureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
   const totalRunFailures = summary ? Object.values(summary.runFailureSummary24h || {}).reduce((acc, value) => acc + value, 0) : 0;
@@ -2800,7 +2842,7 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
         isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/8 bg-white/[0.035] text-slate-400'
       )}>
         {latestRun
-          ? `最近一轮扫描原始抓取 ${latestRun.totalRaw} 条，去重后 ${latestRun.totalUnique} 条，最终入库 ${latestRun.totalSaved} 条。${health?.hotspotCheckQueue.lastError ? `最近错误：${health.hotspotCheckQueue.lastError}` : '当前未发现新的队列错误。'}`
+          ? `最近一轮扫描原始抓取 ${latestRun.totalRaw} 条，去重后 ${latestRun.totalUnique} 条，最终入库 ${latestRun.totalSaved} 条。当前监控源样本 ${summary?.stats.monitoredHotspots ?? summary?.stats.totalHotspots ?? 0} 条，旧版历史样本 ${summary?.stats.legacyHotspots ?? 0} 条。${health?.hotspotCheckQueue.lastError ? `最近错误：${health.hotspotCheckQueue.lastError}` : '当前未发现新的队列错误。'}`
           : '系统正在等待下一轮抓取。这里会持续刷新最近一次抓取、飞书投递和后端健康状态。'}
       </div>
 
@@ -3569,6 +3611,13 @@ function App() {
     const sourceEntries = Object.entries(stats?.bySource || {}).map(([label, value]) => ({ label: getSourceLabel(label), value }));
     return sourceEntries.sort((a, b) => b.value - a.value);
   }, [stats]);
+  const legacySourceSummary = useMemo(() => {
+    const entries = Object.entries(stats?.legacyBySource || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([source, count]) => `${getSourceLabel(source)} ${count} 条`);
+    return entries.join(' · ');
+  }, [stats]);
   const highValueHotspots = useMemo(() => {
     return [...analyticsHotspots]
       .filter(item => item.tenderActionable)
@@ -4018,7 +4067,7 @@ function App() {
                 value={stats?.monitoredTotal ?? stats?.total ?? 0}
                 caption={
                   stats?.legacyTotal
-                    ? `当前 7 个招采源共 ${stats.monitoredTotal ?? stats.total} 条；另有 ${stats.legacyTotal} 条旧版泛热点历史样本仍保留在库内。`
+                    ? `当前 7 个招采源共 ${stats.monitoredTotal ?? stats.total} 条；另有 ${stats.legacyTotal} 条旧版历史样本仍保留在库内。${legacySourceSummary ? `主要来源：${legacySourceSummary}。` : ''}`
                     : '当前 7 个招采源已沉淀的 BIM 招采公告。'
                 }
                 tone="border-cyan-400/15 bg-[linear-gradient(180deg,rgba(14,165,233,0.16),rgba(14,165,233,0.04))]"

@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { extractJsonPayload, debugStructuredText } from '../services/llmProvider.js';
+import { debugStructuredText, extractJsonPayload, getOpenClawAnalysisOptions } from '../services/llmProvider.js';
 
 const TENDER_SOURCES = ['szggzy', 'szygcgpt', 'guangdong', 'gzebpubservice', 'ccgp', 'ggzyNational', 'cebpubservice'] as const;
 
@@ -32,7 +32,11 @@ async function main(): Promise<void> {
   const raw = await debugStructuredText([
     { role: 'system', content: prompt },
     { role: 'user', content }
-  ], { temperature: 0.2, maxTokens: 500 });
+  ], {
+    temperature: 0.2,
+    maxTokens: 500,
+    openclaw: getOpenClawAnalysisOptions({ sessionPrefix: 'probe-analysis' })
+  });
   const elapsedMs = Date.now() - startedAt;
   const payload = extractJsonPayload(raw);
   let parsed: unknown = null;

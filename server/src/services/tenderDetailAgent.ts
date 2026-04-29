@@ -1,5 +1,14 @@
 import type { TenderMetadata } from '../types.js';
-import { generateStructuredJson } from './llmProvider.js';
+import { generateStructuredJson, getOpenClawDetailOptions } from './llmProvider.js';
+import {
+  cleanTenderContact,
+  cleanTenderPhone,
+  cleanTenderServiceScope,
+  cleanTenderUnit,
+  isUsableTenderContact,
+  isUsableTenderPhone,
+  isUsableTenderUnit,
+} from './tenderFieldQuality.js';
 
 type AgentDetailResponse = {
   unit?: string | null;
@@ -115,7 +124,11 @@ export async function extractTenderDetailWithAgent(input: TenderDetailAgentInput
         role: 'user',
         content: buildPrompt(input)
       }
-    ], { temperature: 0.1, maxTokens: 1200 });
+    ], {
+      temperature: 0.1,
+      maxTokens: 1200,
+      openclaw: getOpenClawDetailOptions({ sessionPrefix: 'detail-enrichment' })
+    });
 
     const evidence = Array.isArray(parsed.evidence)
       ? parsed.evidence.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
@@ -125,17 +138,22 @@ export async function extractTenderDetailWithAgent(input: TenderDetailAgentInput
     if (evidence.some((item) => /request has been blocked|potential threats|405\.png|_waf_|验证码|安全验证|VAPTCHA|captcha/i.test(item))) return null;
     if (input.source === 'cebpubservice' && evidence.length === 0) return null;
 
+    const unit = cleanTenderUnit(parsed.unit);
+    const contact = cleanTenderContact(parsed.contact);
+    const phone = cleanTenderPhone(parsed.phone);
+    const serviceScope = cleanTenderServiceScope(parsed.serviceScope);
+
     const extracted: TenderMetadata = {
-      unit: normalizeString(parsed.unit, 120),
+      unit: isUsableTenderUnit(unit) ? (unit ?? undefined) : undefined,
       budgetWan: parseAmountWan(parsed.budgetWan),
       deadline: parseDate(parsed.deadline),
       projectCode: normalizeString(parsed.projectCode, 120),
-      contact: normalizeString(parsed.contact, 60),
-      phone: normalizeString(parsed.phone, 80),
+      contact: isUsableTenderContact(contact) ? (contact ?? undefined) : undefined,
+      phone: isUsableTenderPhone(phone) ? (phone ?? undefined) : undefined,
       email: normalizeString(parsed.email, 120),
       bidOpenTime: parseDate(parsed.bidOpenTime),
       docDeadline: parseDate(parsed.docDeadline),
-      serviceScope: normalizeString(parsed.serviceScope, 1200),
+      serviceScope: serviceScope ?? undefined,
       qualification: normalizeString(parsed.qualification, 1200),
       address: normalizeString(parsed.address, 240),
       detailSource: parsed.confidence === 'blocked' || parsed.confidence === 'not_found'

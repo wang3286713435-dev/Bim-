@@ -1,5 +1,5 @@
 import type { AIAnalysis } from '../types.js';
-import { generateStructuredJson } from './llmProvider.js';
+import { generateStructuredJson, getOpenClawAnalysisOptions } from './llmProvider.js';
 
 // ========== Query Expansion（查询扩展） ==========
 
@@ -65,7 +65,11 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
           role: 'user',
           content: keyword
         }
-      ], { temperature: 0.2, maxTokens: 300 });
+      ], {
+        temperature: 0.2,
+        maxTokens: 300,
+        openclaw: getOpenClawAnalysisOptions({ sessionPrefix: 'expand' })
+      });
 
     const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
     expansionCache.set(keyword, expanded);
@@ -249,17 +253,28 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
               role: 'user',
               content: variants[i]
             }
-          ], { temperature: 0.2, maxTokens: 500 });
+          ], {
+            temperature: 0.2,
+            maxTokens: 500,
+            openclaw: getOpenClawAnalysisOptions({ sessionPrefix: 'analysis' })
+          });
+
+        const normalizedReason = String(parsed.relevanceReason || '').trim();
+        const normalizedSummary = String(parsed.summary || '').trim();
+        const normalizedRelevance = Number(parsed.relevance);
+        if (!normalizedReason || !normalizedSummary || !Number.isFinite(normalizedRelevance)) {
+          throw new Error('AI provider returned an incomplete analysis payload');
+        }
 
         return {
           isReal: Boolean(parsed.isReal),
-          relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
-          relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
+          relevance: Math.min(100, Math.max(0, normalizedRelevance || 0)),
+          relevanceReason: normalizedReason.slice(0, 200),
           keywordMentioned: Boolean(parsed.keywordMentioned),
           importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance)
             ? parsed.importance
             : 'low',
-          summary: String(parsed.summary || '').slice(0, 150),
+          summary: normalizedSummary.slice(0, 150),
           telemetry: {
             provider,
             status: 'success',
