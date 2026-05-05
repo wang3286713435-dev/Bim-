@@ -28,9 +28,9 @@ function getSortTimestamp(run: KeywordRunSnapshot): Date {
 function floorToScheduleWindow(date: Date, intervalHours: number): Date {
   if (intervalHours <= 1) return date;
   const anchor = new Date(date);
-  anchor.setUTCMinutes(0, 0, 0);
-  const flooredHour = Math.floor(anchor.getUTCHours() / intervalHours) * intervalHours;
-  anchor.setUTCHours(flooredHour, 0, 0, 0);
+  anchor.setMinutes(0, 0, 0);
+  const flooredHour = Math.floor(anchor.getHours() / intervalHours) * intervalHours;
+  anchor.setHours(flooredHour, 0, 0, 0);
   return anchor;
 }
 

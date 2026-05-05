@@ -23,6 +23,10 @@ const AI_ANALYSIS_CONCURRENCY = Math.min(
   4,
   Math.max(1, Number.parseInt(process.env.TENDER_AI_CONCURRENCY || '2', 10) || 2)
 );
+const HOTSPOT_SCHEDULE_INTERVAL_HOURS = Math.max(
+  1,
+  Number.parseInt(process.env.HOTSPOT_CHECK_INTERVAL_HOURS || '24', 10) || 24
+);
 
 function filterByFreshness(results: SearchResult[], maxAgeDays: number): SearchResult[] {
   const maxAgeHours = maxAgeDays * 24;
@@ -97,7 +101,7 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
           zeroSaveThreshold: runtimeConfig.keywordCooldownZeroSaveThreshold,
           cooldownHours: runtimeConfig.keywordCooldownHours,
           lookbackDays: runtimeConfig.keywordCooldownLookbackDays,
-          scheduleIntervalHours: 8
+          scheduleIntervalHours: HOTSPOT_SCHEDULE_INTERVAL_HOURS
         }
       );
 

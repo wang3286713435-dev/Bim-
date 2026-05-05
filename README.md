@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.6.5`（热修：机会面板可折叠 + 最近搜索精简 + 代理路由口径修正）
+- `v1.6.17`（扫描频率降为每天一次，降低 WAF 命中风险）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -98,6 +98,8 @@ cp server/.env.example server/.env
 
 ```env
 PORT=3001
+HOTSPOT_CHECK_CRON=0 0 * * *
+HOTSPOT_CHECK_INTERVAL_HOURS=24
 AI_PROVIDER=openclaw
 OPENCLAW_AGENT_ID=bim-tender
 OPENCLAW_ANALYSIS_AGENT_ID=main
@@ -124,6 +126,7 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_ANALYSIS_LOCAL=true`：服务端分析优先跳过 gateway，直接走本地 runtime，减少超时和 session 抖动。
 - `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
+- `HOTSPOT_CHECK_*`：默认每天 `00:00` 扫描一次，降低高频探测导致的 WAF 风险。
 - `TENDER_KEYWORD_COOLDOWN_*`：对连续多轮 `0 saved` 的关键词做自动降频；默认达到 `4` 轮连续零产出后冷却 `24h`，减少空转扫描。
 
 ### 本地开发

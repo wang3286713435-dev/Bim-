@@ -28,11 +28,14 @@ const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 const hasClientBuild = existsSync(path.join(clientDistPath, 'index.html'));
 const serverPackagePath = path.resolve(__dirname, '../package.json');
-const HOTSPOT_SCHEDULE_CRON = process.env.HOTSPOT_CHECK_CRON || '0 */8 * * *';
+const HOTSPOT_SCHEDULE_CRON = process.env.HOTSPOT_CHECK_CRON || '0 0 * * *';
 const HOTSPOT_SCHEDULE_INTERVAL_HOURS = Math.max(
   1,
-  Number.parseInt(process.env.HOTSPOT_CHECK_INTERVAL_HOURS || '8', 10) || 8
+  Number.parseInt(process.env.HOTSPOT_CHECK_INTERVAL_HOURS || '24', 10) || 24
 );
+const HOTSPOT_SCHEDULE_DESCRIPTION = HOTSPOT_SCHEDULE_INTERVAL_HOURS === 24
+  ? '每天自动扫描一次'
+  : `每 ${HOTSPOT_SCHEDULE_INTERVAL_HOURS} 小时自动扫描一次`;
 
 function getAppVersion(): string {
   try {
@@ -92,7 +95,7 @@ app.get('/api/health', async (req, res) => {
     scheduler: {
       cron: HOTSPOT_SCHEDULE_CRON,
       intervalHours: HOTSPOT_SCHEDULE_INTERVAL_HOURS,
-      description: `每 ${HOTSPOT_SCHEDULE_INTERVAL_HOURS} 小时自动扫描一次`
+      description: HOTSPOT_SCHEDULE_DESCRIPTION
     },
     hotspotCheckQueue: getHotspotCheckQueueState(),
     detailEnrichmentQueue: getDetailEnrichmentQueueState(),
@@ -138,7 +141,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Scheduled job: Run hotspot check every 8 hours by default.
+// Scheduled job: Run hotspot check daily by default.
 cron.schedule(HOTSPOT_SCHEDULE_CRON, async () => {
   console.log('🔄 Running scheduled hotspot check...');
   try {
@@ -177,7 +180,7 @@ httpServer.listen(PORT, async () => {
   🔥 BIM Tender Monitor v${APP_VERSION} 启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
-  ⏰ Hotspot check scheduled every ${HOTSPOT_SCHEDULE_INTERVAL_HOURS} hours
+  ⏰ Hotspot check schedule: ${HOTSPOT_SCHEDULE_DESCRIPTION}
   🖥 Frontend ${hasClientBuild ? `served from ${clientDistPath}` : 'not built yet'}
   `);
 });
