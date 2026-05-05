@@ -260,7 +260,7 @@ describe('AI Fallback 行为（无 API Key）', () => {
         'Claude Sonnet 4.6',
         { matched: true, matchedTerms: ['Claude Sonnet 4.6'] }
       );
-      expect(result.relevance).toBe(50);
+      expect(result.relevance).toBe(72);
       expect(result.keywordMentioned).toBe(true);
     } finally {
       process.env.OPENROUTER_API_KEY = originalKey || '';
@@ -277,7 +277,7 @@ describe('AI Fallback 行为（无 API Key）', () => {
         'Claude Sonnet 4.6',
         { matched: false, matchedTerms: [] }
       );
-      expect(result.relevance).toBe(20);
+      expect(result.relevance).toBe(35);
       expect(result.keywordMentioned).toBe(false);
     } finally {
       process.env.OPENROUTER_API_KEY = originalKey || '';

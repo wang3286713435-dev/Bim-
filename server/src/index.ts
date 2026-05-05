@@ -80,7 +80,10 @@ app.get('/api/health', async (req, res) => {
       maxAgeDays: runtimeConfig.maxAgeDays,
       sourceResultLimit: runtimeConfig.sourceResultLimit,
       resultsPerKeyword: runtimeConfig.resultsPerKeyword,
-      queryVariantsPerKeyword: runtimeConfig.queryVariantsPerKeyword
+      queryVariantsPerKeyword: runtimeConfig.queryVariantsPerKeyword,
+      keywordCooldownZeroSaveThreshold: runtimeConfig.keywordCooldownZeroSaveThreshold,
+      keywordCooldownHours: runtimeConfig.keywordCooldownHours,
+      keywordCooldownLookbackDays: runtimeConfig.keywordCooldownLookbackDays
     },
     integrations: {
       feishuWebhookEnabled: isFeishuWebhookEnabled(),

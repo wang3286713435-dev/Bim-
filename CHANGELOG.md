@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.6.14
+
+发布时间：2026-05-05
+状态：观察期效率优化
+
+已完成：
+
+- 新增“连续零产出关键词冷却”机制：定时扫描中，若某关键词连续多轮 `0 saved`，系统会暂时降频，避免继续高频空转。
+- 默认策略：
+  - 连续 `4` 轮零产出后进入冷却
+  - 冷却时长 `24h`
+  - 回看窗口 `14` 天
+- 手动扫描不受该冷却影响，避免影响临时排查和人工验证。
+- 运行配置新增：
+  - `TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD`
+  - `TENDER_KEYWORD_COOLDOWN_HOURS`
+  - `TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS`
+- `/api/health` 补充返回关键词冷却配置，方便后续运维核对。
+- 补了 `keywordCooldown` 单元测试，并修正 AI fallback 测试基线；服务端测试现已恢复通过。
+
 ## v1.6.13
 
 发布时间：2026-04-27

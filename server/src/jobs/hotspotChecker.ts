@@ -10,6 +10,7 @@ import { createCrawlRun, logSourceProbe, updateCrawlRun } from '../services/craw
 import { getRuntimeConfig } from '../services/runtimeConfig.js';
 import { enqueueHotspotDetailEnrichment } from '../services/tenderDetailEnrichment.js';
 import { recordAIAnalysisLog } from '../services/aiAnalysisLogger.js';
+import { evaluateKeywordCooldown } from '../services/keywordCooldown.js';
 import {
   buildSearchQueries,
   getEnabledTenderSources,
@@ -49,6 +50,7 @@ function prioritizeResults(results: SearchResult[]): SearchResult[] {
 
 export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'scheduled' = 'manual'): Promise<void> {
   console.log('🔍 Starting hotspot check...');
+  const runtimeConfig = await getRuntimeConfig();
 
   // 获取所有激活的关键词
   const keywords = await prisma.keyword.findMany({
@@ -60,16 +62,80 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
     return;
   }
 
-  console.log(`Checking ${keywords.length} keywords...`);
+  let runnableKeywords = keywords;
+  if (triggerType === 'scheduled' && keywords.length > 0) {
+    const lookbackStartedAt = new Date(Date.now() - runtimeConfig.keywordCooldownLookbackDays * 24 * 60 * 60 * 1000);
+    const recentRuns = await prisma.crawlRun.findMany({
+      where: {
+        triggerType: 'scheduled',
+        status: 'completed',
+        keywordId: { in: keywords.map((keyword) => keyword.id) },
+        startedAt: { gte: lookbackStartedAt }
+      },
+      select: {
+        keywordId: true,
+        totalSaved: true,
+        startedAt: true,
+        completedAt: true
+      },
+      orderBy: { startedAt: 'desc' }
+    });
+
+    const runsByKeyword = new Map<string, typeof recentRuns>();
+    for (const run of recentRuns) {
+      if (!run.keywordId) continue;
+      const list = runsByKeyword.get(run.keywordId) || [];
+      list.push(run);
+      runsByKeyword.set(run.keywordId, list);
+    }
+
+    const skippedKeywords: Array<{ text: string; consecutiveZeroSaveRuns: number; cooldownRemainingMs: number }> = [];
+    runnableKeywords = keywords.filter((keyword) => {
+      const decision = evaluateKeywordCooldown(
+        runsByKeyword.get(keyword.id) || [],
+        {
+          zeroSaveThreshold: runtimeConfig.keywordCooldownZeroSaveThreshold,
+          cooldownHours: runtimeConfig.keywordCooldownHours,
+          lookbackDays: runtimeConfig.keywordCooldownLookbackDays
+        }
+      );
+
+      if (!decision.shouldSkip) return true;
+
+      skippedKeywords.push({
+        text: keyword.text,
+        consecutiveZeroSaveRuns: decision.consecutiveZeroSaveRuns,
+        cooldownRemainingMs: decision.cooldownRemainingMs,
+      });
+      return false;
+    });
+
+    if (skippedKeywords.length > 0) {
+      console.log(`⏸ Keyword cooldown active: skipped ${skippedKeywords.length}/${keywords.length} keywords`);
+      for (const item of skippedKeywords.slice(0, 12)) {
+        const remainingHours = Math.max(1, Math.ceil(item.cooldownRemainingMs / (60 * 60 * 1000)));
+        console.log(`  · ${item.text}: ${item.consecutiveZeroSaveRuns} consecutive zero-save runs, retry in ~${remainingHours}h`);
+      }
+      if (skippedKeywords.length > 12) {
+        console.log(`  · ...and ${skippedKeywords.length - 12} more`);
+      }
+    }
+  }
+
+  if (runnableKeywords.length === 0) {
+    console.log('All active keywords are currently cooling down; skipping this scheduled run');
+    return;
+  }
+
+  console.log(`Checking ${runnableKeywords.length}/${keywords.length} keywords...`);
 
   let newHotspotsCount = 0;
 
-  for (const keyword of keywords) {
+  for (const keyword of runnableKeywords) {
     console.log(`\n📎 Checking keyword: "${keyword.text}"`);
     let runId: string | null = null;
 
     try {
-      const runtimeConfig = await getRuntimeConfig();
       // 第一步：Query Expansion（查询扩展）
       console.log(`  🔍 Expanding keyword "${keyword.text}"...`);
       const expandedKeywords = await expandKeyword(keyword.text);

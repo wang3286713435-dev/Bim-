@@ -106,6 +106,9 @@ OPENCLAW_DETAIL_AGENT_ID=bim-tender
 OPENCLAW_DETAIL_LOCAL=false
 OPENCLAW_BIN=/Users/yourname/.openclaw/bin/openclaw
 OPENCLAW_TIMEOUT_MS=180000
+TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD=4
+TENDER_KEYWORD_COOLDOWN_HOURS=24
+TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS=14
 
 FIRECRAWL_API_KEY=
 FEISHU_BOT_WEBHOOK_URL=
@@ -121,6 +124,7 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_ANALYSIS_LOCAL=true`：服务端分析优先跳过 gateway，直接走本地 runtime，减少超时和 session 抖动。
 - `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
+- `TENDER_KEYWORD_COOLDOWN_*`：对连续多轮 `0 saved` 的关键词做自动降频；默认达到 `4` 轮连续零产出后冷却 `24h`，减少空转扫描。
 
 ### 本地开发
 

@@ -11,6 +11,9 @@ export type RuntimeConfig = {
   sourceResultLimit: number;
   resultsPerKeyword: number;
   queryVariantsPerKeyword: number;
+  keywordCooldownZeroSaveThreshold: number;
+  keywordCooldownHours: number;
+  keywordCooldownLookbackDays: number;
   sourceRetryCount: number;
   sourceRetryDelayMs: number;
   circuitBreakerThreshold: number;
@@ -28,6 +31,9 @@ export const RUNTIME_SETTING_KEYS = [
   'TENDER_SOURCE_RESULT_LIMIT',
   'TENDER_RESULTS_PER_KEYWORD',
   'TENDER_QUERY_VARIANTS_PER_KEYWORD',
+  'TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD',
+  'TENDER_KEYWORD_COOLDOWN_HOURS',
+  'TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS',
   'TENDER_SOURCE_RETRY_COUNT',
   'TENDER_SOURCE_RETRY_DELAY_MS',
   'TENDER_SOURCE_CIRCUIT_BREAKER_THRESHOLD',
@@ -83,6 +89,9 @@ export function buildDefaultRuntimeConfig(): RuntimeConfig {
     sourceResultLimit: parseIntSafe(process.env.TENDER_SOURCE_RESULT_LIMIT, 8),
     resultsPerKeyword: parseIntSafe(process.env.TENDER_RESULTS_PER_KEYWORD, 8),
     queryVariantsPerKeyword: parseIntSafe(process.env.TENDER_QUERY_VARIANTS_PER_KEYWORD, 2),
+    keywordCooldownZeroSaveThreshold: parseIntSafe(process.env.TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD, 4),
+    keywordCooldownHours: parseIntSafe(process.env.TENDER_KEYWORD_COOLDOWN_HOURS, 24),
+    keywordCooldownLookbackDays: parseIntSafe(process.env.TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS, 14),
     sourceRetryCount: parseIntSafe(process.env.TENDER_SOURCE_RETRY_COUNT, 2),
     sourceRetryDelayMs: parseIntSafe(process.env.TENDER_SOURCE_RETRY_DELAY_MS, 1200),
     circuitBreakerThreshold: parseIntSafe(process.env.TENDER_SOURCE_CIRCUIT_BREAKER_THRESHOLD, 3),
@@ -102,6 +111,9 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig>): RuntimeCo
     sourceResultLimit: 8,
     resultsPerKeyword: 8,
     queryVariantsPerKeyword: 2,
+    keywordCooldownZeroSaveThreshold: 4,
+    keywordCooldownHours: 24,
+    keywordCooldownLookbackDays: 14,
     sourceRetryCount: 2,
     sourceRetryDelayMs: 1200,
     circuitBreakerThreshold: 3,
@@ -121,6 +133,9 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig>): RuntimeCo
     sourceResultLimit: clampInteger(input.sourceResultLimit ?? defaults.sourceResultLimit, 1, 50),
     resultsPerKeyword: clampInteger(input.resultsPerKeyword ?? defaults.resultsPerKeyword, 1, 50),
     queryVariantsPerKeyword: clampInteger(input.queryVariantsPerKeyword ?? defaults.queryVariantsPerKeyword, 1, 10),
+    keywordCooldownZeroSaveThreshold: clampInteger(input.keywordCooldownZeroSaveThreshold ?? defaults.keywordCooldownZeroSaveThreshold, 0, 30),
+    keywordCooldownHours: clampInteger(input.keywordCooldownHours ?? defaults.keywordCooldownHours, 0, 720),
+    keywordCooldownLookbackDays: clampInteger(input.keywordCooldownLookbackDays ?? defaults.keywordCooldownLookbackDays, 1, 90),
     sourceRetryCount: clampInteger(input.sourceRetryCount ?? defaults.sourceRetryCount, 0, 5),
     sourceRetryDelayMs: clampInteger(input.sourceRetryDelayMs ?? defaults.sourceRetryDelayMs, 0, 60000),
     circuitBreakerThreshold: clampInteger(input.circuitBreakerThreshold ?? defaults.circuitBreakerThreshold, 1, 20),
@@ -141,6 +156,9 @@ export function runtimeConfigToSettings(config: RuntimeConfig): Record<string, s
     TENDER_SOURCE_RESULT_LIMIT: String(normalized.sourceResultLimit),
     TENDER_RESULTS_PER_KEYWORD: String(normalized.resultsPerKeyword),
     TENDER_QUERY_VARIANTS_PER_KEYWORD: String(normalized.queryVariantsPerKeyword),
+    TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD: String(normalized.keywordCooldownZeroSaveThreshold),
+    TENDER_KEYWORD_COOLDOWN_HOURS: String(normalized.keywordCooldownHours),
+    TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS: String(normalized.keywordCooldownLookbackDays),
     TENDER_SOURCE_RETRY_COUNT: String(normalized.sourceRetryCount),
     TENDER_SOURCE_RETRY_DELAY_MS: String(normalized.sourceRetryDelayMs),
     TENDER_SOURCE_CIRCUIT_BREAKER_THRESHOLD: String(normalized.circuitBreakerThreshold),
@@ -172,6 +190,9 @@ export async function getRuntimeConfig(forceRefresh = false): Promise<RuntimeCon
     sourceResultLimit: parseIntSafe(map.TENDER_SOURCE_RESULT_LIMIT, defaults.sourceResultLimit),
     resultsPerKeyword: parseIntSafe(map.TENDER_RESULTS_PER_KEYWORD, defaults.resultsPerKeyword),
     queryVariantsPerKeyword: parseIntSafe(map.TENDER_QUERY_VARIANTS_PER_KEYWORD, defaults.queryVariantsPerKeyword),
+    keywordCooldownZeroSaveThreshold: parseIntSafe(map.TENDER_KEYWORD_COOLDOWN_ZERO_SAVE_THRESHOLD, defaults.keywordCooldownZeroSaveThreshold),
+    keywordCooldownHours: parseIntSafe(map.TENDER_KEYWORD_COOLDOWN_HOURS, defaults.keywordCooldownHours),
+    keywordCooldownLookbackDays: parseIntSafe(map.TENDER_KEYWORD_COOLDOWN_LOOKBACK_DAYS, defaults.keywordCooldownLookbackDays),
     sourceRetryCount: parseIntSafe(map.TENDER_SOURCE_RETRY_COUNT, defaults.sourceRetryCount),
     sourceRetryDelayMs: parseIntSafe(map.TENDER_SOURCE_RETRY_DELAY_MS, defaults.sourceRetryDelayMs),
     circuitBreakerThreshold: parseIntSafe(map.TENDER_SOURCE_CIRCUIT_BREAKER_THRESHOLD, defaults.circuitBreakerThreshold),
