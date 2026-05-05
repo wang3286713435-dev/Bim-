@@ -96,7 +96,8 @@ export async function runHotspotCheck(io: Server, triggerType: 'manual' | 'sched
         {
           zeroSaveThreshold: runtimeConfig.keywordCooldownZeroSaveThreshold,
           cooldownHours: runtimeConfig.keywordCooldownHours,
-          lookbackDays: runtimeConfig.keywordCooldownLookbackDays
+          lookbackDays: runtimeConfig.keywordCooldownLookbackDays,
+          scheduleIntervalHours: 8
         }
       );
 

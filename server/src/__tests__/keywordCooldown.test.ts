@@ -41,26 +41,26 @@ describe('evaluateKeywordCooldown', () => {
       [
         {
           totalSaved: 0,
-          startedAt: new Date('2026-05-05T08:00:00.000Z'),
+          startedAt: new Date('2026-05-05T08:13:00.000Z'),
           completedAt: new Date('2026-05-05T08:13:00.000Z'),
         },
         {
           totalSaved: 0,
-          startedAt: new Date('2026-05-05T00:00:00.000Z'),
+          startedAt: new Date('2026-05-05T00:05:00.000Z'),
           completedAt: new Date('2026-05-05T00:05:00.000Z'),
         },
         {
           totalSaved: 0,
-          startedAt: new Date('2026-05-04T16:00:00.000Z'),
+          startedAt: new Date('2026-05-04T16:07:00.000Z'),
           completedAt: new Date('2026-05-04T16:05:00.000Z'),
         },
         {
           totalSaved: 0,
-          startedAt: new Date('2026-05-04T08:00:00.000Z'),
+          startedAt: new Date('2026-05-04T08:09:00.000Z'),
           completedAt: new Date('2026-05-04T08:05:00.000Z'),
         },
       ],
-      { zeroSaveThreshold: 4, cooldownHours: 24, lookbackDays: 14 },
+      { zeroSaveThreshold: 4, cooldownHours: 24, lookbackDays: 14, scheduleIntervalHours: 8 },
       new Date('2026-05-06T08:00:00.000Z')
     );
 

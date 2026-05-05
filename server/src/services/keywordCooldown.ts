@@ -8,6 +8,7 @@ export type KeywordCooldownPolicy = {
   zeroSaveThreshold: number;
   cooldownHours: number;
   lookbackDays: number;
+  scheduleIntervalHours?: number;
 };
 
 export type KeywordCooldownDecision = {
@@ -24,8 +25,20 @@ function getSortTimestamp(run: KeywordRunSnapshot): Date {
   return run.completedAt ?? run.startedAt;
 }
 
-function getCooldownAnchor(run: KeywordRunSnapshot): Date {
-  return run.startedAt;
+function floorToScheduleWindow(date: Date, intervalHours: number): Date {
+  if (intervalHours <= 1) return date;
+  const anchor = new Date(date);
+  anchor.setUTCMinutes(0, 0, 0);
+  const flooredHour = Math.floor(anchor.getUTCHours() / intervalHours) * intervalHours;
+  anchor.setUTCHours(flooredHour, 0, 0, 0);
+  return anchor;
+}
+
+function getCooldownAnchor(run: KeywordRunSnapshot, policy: KeywordCooldownPolicy): Date {
+  const intervalHours = policy.scheduleIntervalHours ?? 0;
+  return intervalHours > 1
+    ? floorToScheduleWindow(run.startedAt, intervalHours)
+    : run.startedAt;
 }
 
 export function evaluateKeywordCooldown(
@@ -37,9 +50,9 @@ export function evaluateKeywordCooldown(
     .sort((a, b) => getSortTimestamp(b).getTime() - getSortTimestamp(a).getTime());
 
   const latestRun = sortedRuns[0];
-  const lastAttemptAt = latestRun ? getCooldownAnchor(latestRun) : undefined;
+  const lastAttemptAt = latestRun ? getCooldownAnchor(latestRun, policy) : undefined;
   const lastSavedRun = sortedRuns.find((run) => (run.totalSaved ?? 0) > 0);
-  const lastSavedAt = lastSavedRun ? getCooldownAnchor(lastSavedRun) : undefined;
+  const lastSavedAt = lastSavedRun ? getCooldownAnchor(lastSavedRun, policy) : undefined;
 
   let consecutiveZeroSaveRuns = 0;
   for (const run of sortedRuns) {
