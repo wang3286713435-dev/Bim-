@@ -20,8 +20,12 @@ export type KeywordCooldownDecision = {
   recentRunCount: number;
 };
 
-function getRunTimestamp(run: KeywordRunSnapshot): Date {
+function getSortTimestamp(run: KeywordRunSnapshot): Date {
   return run.completedAt ?? run.startedAt;
+}
+
+function getCooldownAnchor(run: KeywordRunSnapshot): Date {
+  return run.startedAt;
 }
 
 export function evaluateKeywordCooldown(
@@ -30,12 +34,12 @@ export function evaluateKeywordCooldown(
   now = new Date()
 ): KeywordCooldownDecision {
   const sortedRuns = [...runs]
-    .sort((a, b) => getRunTimestamp(b).getTime() - getRunTimestamp(a).getTime());
+    .sort((a, b) => getSortTimestamp(b).getTime() - getSortTimestamp(a).getTime());
 
   const latestRun = sortedRuns[0];
-  const lastAttemptAt = latestRun ? getRunTimestamp(latestRun) : undefined;
+  const lastAttemptAt = latestRun ? getCooldownAnchor(latestRun) : undefined;
   const lastSavedRun = sortedRuns.find((run) => (run.totalSaved ?? 0) > 0);
-  const lastSavedAt = lastSavedRun ? getRunTimestamp(lastSavedRun) : undefined;
+  const lastSavedAt = lastSavedRun ? getCooldownAnchor(lastSavedRun) : undefined;
 
   let consecutiveZeroSaveRuns = 0;
   for (const run of sortedRuns) {
