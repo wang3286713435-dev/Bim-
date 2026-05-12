@@ -1,5 +1,24 @@
 const API_BASE = '/api';
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export interface AuthSession {
+  authenticated: boolean;
+  username: string | null;
+  expiresAt?: string | null;
+  sessionTtlHours?: number;
+}
+
 export interface Keyword {
   id: string;
   text: string;
@@ -408,8 +427,13 @@ export interface HealthStatus {
   };
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+type RequestConfig = {
+  suppressAuthEvent?: boolean;
+};
+
+async function request<T>(endpoint: string, options: RequestInit = {}, config: RequestConfig = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers
@@ -419,7 +443,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || 'Request failed');
+    const apiError = new ApiError(error.error || 'Request failed', response.status, error.code);
+    if (response.status === 401 && !config.suppressAuthEvent && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:required'));
+    }
+    throw apiError;
   }
 
   if (response.status === 204) {
@@ -428,6 +456,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   return response.json();
 }
+
+export const authApi = {
+  getSession: () => request<AuthSession>('/auth/session', {}, { suppressAuthEvent: true }),
+
+  login: (username: string, password: string) =>
+    request<AuthSession>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    }, { suppressAuthEvent: true }),
+
+  logout: () =>
+    request<{ success: boolean }>('/auth/logout', {
+      method: 'POST'
+    }, { suppressAuthEvent: true })
+};
 
 export const healthApi = {
   get: () => request<HealthStatus>('/health')

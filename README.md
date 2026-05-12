@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.6.17`（扫描频率降为每天一次，降低 WAF 命中风险）
+- `v1.6.18`（新增登录保护，匿名访问无法直接看到监控数据）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -100,6 +100,11 @@ cp server/.env.example server/.env
 PORT=3001
 HOTSPOT_CHECK_CRON=0 0 * * *
 HOTSPOT_CHECK_INTERVAL_HOURS=24
+AUTH_USERNAME=admin
+AUTH_PASSWORD=88888888
+AUTH_SESSION_SECRET=change_this_before_public_release
+AUTH_SESSION_TTL_HOURS=168
+AUTH_COOKIE_SECURE=false
 AI_PROVIDER=openclaw
 OPENCLAW_AGENT_ID=bim-tender
 OPENCLAW_ANALYSIS_AGENT_ID=main
@@ -127,6 +132,7 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
 - `HOTSPOT_CHECK_*`：默认每天 `00:00` 扫描一次，降低高频探测导致的 WAF 风险。
+- `AUTH_*`：访问保护配置。默认账号密码是 `admin / 88888888`，正式对外前建议至少修改密码和 `AUTH_SESSION_SECRET`。
 - `TENDER_KEYWORD_COOLDOWN_*`：对连续多轮 `0 saved` 的关键词做自动降频；默认达到 `4` 轮连续零产出后冷却 `24h`，减少空转扫描。
 
 ### 本地开发

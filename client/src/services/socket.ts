@@ -6,7 +6,8 @@ export function getSocket(): Socket {
   if (!socket) {
     socket = io(window.location.origin, {
       path: '/socket.io',
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      withCredentials: true
     });
 
     socket.on('connect', () => {
@@ -19,6 +20,10 @@ export function getSocket(): Socket {
 
     socket.on('connect_error', (error) => {
       console.error('🔌 Socket connection error:', error);
+      if (error.message === 'AUTH_REQUIRED') {
+        socket?.disconnect();
+        window.dispatchEvent(new CustomEvent('auth:required'));
+      }
     });
   }
 

@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { prisma } from './db.js';
+import authRouter from './routes/auth.js';
 import keywordsRouter from './routes/keywords.js';
 import hotspotsRouter from './routes/hotspots.js';
 import settingsRouter from './routes/settings.js';
@@ -20,6 +21,7 @@ import { getRuntimeConfig } from './services/runtimeConfig.js';
 import { getDetailEnrichmentQueueState } from './services/tenderDetailEnrichment.js';
 import { isFeishuBitableEnabled, isFeishuWebhookEnabled } from './services/feishu.js';
 import { getProxyHealthRefreshIntervalMs, hasEnabledProxyPool, refreshProxyPoolHealth } from './services/proxyPool.js';
+import { getSessionFromRequest, requireAuth } from './services/auth.js';
 
 dotenv.config();
 
@@ -63,6 +65,8 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
+app.use('/api/auth', authRouter);
+app.use('/api', requireAuth);
 app.use('/api/keywords', keywordsRouter);
 app.use('/api/hotspots', hotspotsRouter);
 app.use('/api/settings', settingsRouter);
@@ -124,8 +128,19 @@ if (hasClientBuild) {
 }
 
 // WebSocket connection handling
+io.use((socket, next) => {
+  const session = getSessionFromRequest(socket.request as typeof socket.request & { headers: { cookie?: string } });
+  if (!session) {
+    next(new Error('AUTH_REQUIRED'));
+    return;
+  }
+
+  socket.data.authUser = session.username;
+  next();
+});
+
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log('Client connected:', socket.id, socket.data.authUser ? `(${socket.data.authUser})` : '');
 
   socket.on('subscribe', (keywords: string[]) => {
     keywords.forEach(kw => socket.join(`keyword:${kw}`));

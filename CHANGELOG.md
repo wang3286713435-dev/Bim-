@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.6.18
+
+发布时间：2026-05-12
+状态：访问权限保护
+
+已完成：
+
+- 新增前端登录页，未登录时访问域名将先进入登录界面，而不会直接看到招采列表、分析面板和后端运维信息。
+- 新增后端会话鉴权：
+  - `/api/auth/login`
+  - `/api/auth/session`
+  - `/api/auth/logout`
+- 除登录接口外，`/api` 下其余接口默认都需要登录态，匿名访问会返回 `401`。
+- `socket.io` 连接也已接入同一套会话校验，未登录用户无法直接订阅实时公告和通知流。
+- 默认账号密码：
+  - 用户名：`admin`
+  - 密码：`88888888`
+- 支持通过环境变量覆盖：
+  - `AUTH_USERNAME`
+  - `AUTH_PASSWORD`
+  - `AUTH_SESSION_SECRET`
+  - `AUTH_SESSION_TTL_HOURS`
+  - `AUTH_COOKIE_SECURE`
+
 ## v1.6.17
 
 发布时间：2026-05-06

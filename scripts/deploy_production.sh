@@ -44,7 +44,20 @@ ssh -o BatchMode=yes "${TARGET_HOST}" "
   runuser -u '${REMOTE_RUN_USER}' -- bash -lc 'cd \"${REMOTE_DIR}/client\" && npm run build && cd \"${REMOTE_DIR}/server\" && npm run build' &&
   systemctl restart '${REMOTE_SERVICE}' &&
   sleep 3 &&
-  curl -fsS http://localhost:3001/api/health
+  ROOT_STATUS=\$(curl -s -o /tmp/bim_tender_root_check.html -w '%{http_code}' http://localhost:3001/) &&
+  AUTH_STATUS=\$(curl -s -o /tmp/bim_tender_auth_check.json -w '%{http_code}' http://localhost:3001/api/auth/session) &&
+  HEALTH_STATUS=\$(curl -s -o /tmp/bim_tender_health_check.json -w '%{http_code}' http://localhost:3001/api/health || true) &&
+  [ \"\${ROOT_STATUS}\" = '200' ] &&
+  [ \"\${AUTH_STATUS}\" = '401' ] &&
+  if [ \"\${HEALTH_STATUS}\" = '200' ]; then
+    cat /tmp/bim_tender_health_check.json;
+  elif [ \"\${HEALTH_STATUS}\" = '401' ]; then
+    printf '{\"status\":\"ok\",\"health\":\"protected\",\"auth\":\"required\"}\n';
+  else
+    echo \"Unexpected health status: \${HEALTH_STATUS}\" >&2;
+    cat /tmp/bim_tender_health_check.json >&2 || true;
+    exit 1;
+  fi
 "
 
 echo

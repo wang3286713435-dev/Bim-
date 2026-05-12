@@ -17,6 +17,8 @@ import {
   Flame,
   Gavel,
   Layers3,
+  LockKeyhole,
+  LogOut,
   MapPin,
   Radar,
   RefreshCw,
@@ -27,17 +29,20 @@ import {
   Target,
   TimerReset,
   Trash2,
+  UserRound,
   WalletCards,
   X,
   SunMedium,
   MoonStar
 } from 'lucide-react';
 import {
+  authApi,
   healthApi,
   hotspotsApi,
   keywordsApi,
   notificationsApi,
   triggerHotspotCheck,
+  type AuthSession,
   type CrawlRun,
   type Hotspot,
   type Keyword,
@@ -46,7 +51,7 @@ import {
   type OpsSummary,
   type Stats
 } from './services/api';
-import { onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
+import { disconnectSocket, onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
 import FilterSortBar, { defaultFilterState, type FilterState, type SavedFilterView } from './components/FilterSortBar';
 import { BackgroundBeams } from './components/ui/background-beams';
 import { Spotlight } from './components/ui/spotlight';
@@ -3040,7 +3045,107 @@ function MonitorLogPanel({ summary, health, themeMode }: { summary: OpsSummary |
   );
 }
 
-function App() {
+type LoginScreenProps = {
+  isSubmitting: boolean;
+  errorMessage: string | null;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+};
+
+function LoginScreen({ isSubmitting, errorMessage, onSubmit }: LoginScreenProps) {
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+
+  return (
+    <div className="min-h-screen bg-[#07111f] text-white">
+      <BackgroundBeams className="opacity-60" />
+      <Spotlight className="-top-32 left-1/2 h-[28rem] w-[28rem] -translate-x-1/2" fill="#0ea5e9" />
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-40 bg-[linear-gradient(180deg,rgba(7,17,31,0.96),rgba(7,17,31,0))]" />
+      <div className="pointer-events-none fixed right-[-120px] top-24 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+      <div className="pointer-events-none fixed bottom-0 left-[-120px] h-72 w-72 rounded-full bg-amber-300/10 blur-3xl" />
+
+      <main className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10 sm:px-6 lg:px-8">
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md rounded-[32px] border border-white/10 bg-[#0b1324]/92 p-8 shadow-[0_28px_90px_rgba(0,0,0,0.35)] backdrop-blur-2xl"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-[20px] border border-cyan-300/20 bg-[linear-gradient(135deg,rgba(34,211,238,0.22),rgba(251,191,36,0.12))] shadow-[0_16px_40px_rgba(14,165,233,0.18)]">
+              <LockKeyhole className="h-7 w-7 text-cyan-200" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.28em] text-cyan-300/75">Protected Access</p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">登录 BIM 招采监控台</h1>
+            </div>
+          </div>
+
+          <p className="mt-5 text-sm leading-7 text-slate-300">
+            我们已经把前端和 API 都加上了会话校验。现在访问域名时，需要先登录，避免任何人直接看到招采数据、运维状态和后端配置。
+          </p>
+
+          <form className="mt-8 space-y-4" onSubmit={onSubmit}>
+            <label className="block">
+              <span className="mb-2 flex items-center gap-2 text-sm text-slate-300">
+                <UserRound className="h-4 w-4 text-cyan-200" />
+                用户名
+              </span>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50 focus:bg-white/[0.08]"
+                placeholder="请输入用户名"
+                name="username"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 flex items-center gap-2 text-sm text-slate-300">
+                <LockKeyhole className="h-4 w-4 text-cyan-200" />
+                密码
+              </span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                type="password"
+                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50 focus:bg-white/[0.08]"
+                placeholder="请输入密码"
+                name="password"
+              />
+            </label>
+
+            {errorMessage && (
+              <div className="rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                {errorMessage}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#0ea5e9,#14b8a6)] px-5 py-3 text-sm font-medium text-white shadow-[0_16px_40px_rgba(14,165,233,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-80"
+            >
+              <ShieldCheck className={cn('h-4 w-4', isSubmitting && 'animate-pulse')} />
+              {isSubmitting ? '登录中…' : '进入监控台'}
+            </button>
+          </form>
+
+          <div className="mt-6 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-xs leading-6 text-slate-400">
+            当前是基础访问保护版本。后续如果我们切到 HTTPS，可以再把登录 Cookie 升级为 `Secure`，进一步收紧会话安全。
+          </div>
+        </motion.div>
+      </main>
+    </div>
+  );
+}
+
+type DashboardAppProps = {
+  authUser: string;
+  onLogout: () => Promise<void>;
+};
+
+function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('opportunities');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
     if (typeof window === 'undefined') return 'dark';
@@ -3079,6 +3184,7 @@ function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<Hotspot | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const heroProgressRunRef = useRef(0);
   const appVersion = healthStatus?.version || '读取中';
 
@@ -3310,6 +3416,15 @@ function App() {
       setIsChecking(false);
     }
   };
+
+  const handleLogout = useCallback(async () => {
+    setIsLoggingOut(true);
+    try {
+      await onLogout();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }, [onLogout]);
 
   const handleSearch = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -3796,6 +3911,15 @@ function App() {
             />
 
             <div className="flex flex-wrap items-center gap-3">
+              <div className={cn(
+                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm',
+                themeMode === 'light'
+                  ? 'border-slate-200 bg-white text-slate-600'
+                  : 'border-white/10 bg-white/5 text-slate-300'
+              )}>
+                <UserRound className="h-4 w-4" />
+                <span>{authUser}</span>
+              </div>
               <button
                 onClick={() => setThemeMode(prev => prev === 'dark' ? 'light' : 'dark')}
                 className={cn(
@@ -3827,6 +3951,19 @@ function App() {
               >
                 <RefreshCw className={cn('h-4 w-4', isChecking && 'animate-spin')} />
                 {isChecking ? '提交中' : '后台扫描'}
+              </button>
+              <button
+                onClick={() => { void handleLogout(); }}
+                disabled={isLoggingOut}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent',
+                  themeMode === 'light'
+                    ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100'
+                    : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                )}
+              >
+                <LogOut className={cn('h-4 w-4', isLoggingOut && 'animate-pulse')} />
+                {isLoggingOut ? '退出中' : '退出登录'}
               </button>
 
               <div className="relative">
@@ -4435,6 +4572,111 @@ function App() {
       </main>
 
     </div>
+  );
+}
+
+function App() {
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const loadSession = useCallback(async () => {
+    setIsCheckingSession(true);
+    try {
+      const nextSession = await authApi.getSession();
+      if (nextSession.authenticated) {
+        setSession(nextSession);
+        setAuthError(null);
+      } else {
+        setSession(null);
+      }
+    } catch {
+      setSession(null);
+    } finally {
+      setIsCheckingSession(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSession();
+  }, [loadSession]);
+
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      disconnectSocket();
+      setSession(null);
+      setAuthError('登录已失效，请重新登录。');
+      setIsCheckingSession(false);
+    };
+
+    window.addEventListener('auth:required', handleAuthRequired as EventListener);
+    return () => {
+      window.removeEventListener('auth:required', handleAuthRequired as EventListener);
+      disconnectSocket();
+    };
+  }, []);
+
+  const handleLogin = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const username = String(formData.get('username') || '').trim();
+    const password = String(formData.get('password') || '');
+
+    if (!username || !password) {
+      setAuthError('请输入用户名和密码。');
+      return;
+    }
+
+    setIsSubmittingLogin(true);
+    try {
+      const nextSession = await authApi.login(username, password);
+      setSession(nextSession);
+      setAuthError(null);
+      disconnectSocket();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : '登录失败，请稍后重试。');
+      setSession(null);
+    } finally {
+      setIsSubmittingLogin(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await authApi.logout();
+    } finally {
+      disconnectSocket();
+      setSession(null);
+      setAuthError(null);
+    }
+  }, []);
+
+  if (isCheckingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#07111f] text-slate-300">
+        <div className="rounded-[28px] border border-white/10 bg-[#0b1324]/92 px-6 py-5 text-sm shadow-[0_20px_70px_rgba(0,0,0,0.32)]">
+          正在校验登录状态…
+        </div>
+      </div>
+    );
+  }
+
+  if (!session?.authenticated) {
+    return (
+      <LoginScreen
+        isSubmitting={isSubmittingLogin}
+        errorMessage={authError}
+        onSubmit={handleLogin}
+      />
+    );
+  }
+
+  return (
+    <DashboardApp
+      authUser={session.username || 'admin'}
+      onLogout={handleLogout}
+    />
   );
 }
 
