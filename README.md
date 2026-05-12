@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.6.18`（新增登录保护，匿名访问无法直接看到监控数据）
+- `v1.6.19`（正式域名切换到 HTTPS 会话模式）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -104,7 +104,8 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=88888888
 AUTH_SESSION_SECRET=change_this_before_public_release
 AUTH_SESSION_TTL_HOURS=168
-AUTH_COOKIE_SECURE=false
+AUTH_COOKIE_SECURE=true
+FORCE_HTTPS=true
 AI_PROVIDER=openclaw
 OPENCLAW_AGENT_ID=bim-tender
 OPENCLAW_ANALYSIS_AGENT_ID=main
@@ -133,6 +134,8 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
 - `HOTSPOT_CHECK_*`：默认每天 `00:00` 扫描一次，降低高频探测导致的 WAF 风险。
 - `AUTH_*`：访问保护配置。默认账号密码是 `admin / 88888888`，正式对外前建议至少修改密码和 `AUTH_SESSION_SECRET`。
+- `AUTH_COOKIE_SECURE=true`：正式域名走 HTTPS 时建议开启，这样登录 Cookie 不会在明文 HTTP 里传输。
+- `FORCE_HTTPS=true`：建议正式域名环境开启；用户即使误输入 `http://`，也会自动跳到 `https://`。
 - `TENDER_KEYWORD_COOLDOWN_*`：对连续多轮 `0 saved` 的关键词做自动降频；默认达到 `4` 轮连续零产出后冷却 `24h`，减少空转扫描。
 
 ### 本地开发

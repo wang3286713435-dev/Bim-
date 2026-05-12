@@ -38,6 +38,7 @@ const HOTSPOT_SCHEDULE_INTERVAL_HOURS = Math.max(
 const HOTSPOT_SCHEDULE_DESCRIPTION = HOTSPOT_SCHEDULE_INTERVAL_HOURS === 24
   ? '每天自动扫描一次'
   : `每 ${HOTSPOT_SCHEDULE_INTERVAL_HOURS} 小时自动扫描一次`;
+const FORCE_HTTPS = process.env.FORCE_HTTPS === 'true';
 
 function getAppVersion(): string {
   try {
@@ -52,6 +53,7 @@ function getAppVersion(): string {
 const APP_VERSION = getAppVersion();
 
 const app = express();
+app.set('trust proxy', true);
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
@@ -62,6 +64,27 @@ const io = new Server(httpServer, {
 
 // Middleware
 app.use(cors());
+app.use((req, res, next) => {
+  if (!FORCE_HTTPS) {
+    return next();
+  }
+
+  const forwardedProto = req.header('x-forwarded-proto')?.split(',')[0]?.trim();
+  const cfVisitor = req.header('cf-visitor');
+  const isSecureRequest = req.secure
+    || forwardedProto === 'https'
+    || Boolean(cfVisitor && /"scheme":"https"/i.test(cfVisitor));
+  if (isSecureRequest) {
+    return next();
+  }
+
+  const host = req.header('host');
+  if (!host) {
+    return next();
+  }
+
+  return res.redirect(301, `https://${host}${req.originalUrl}`);
+});
 app.use(express.json());
 
 // Routes

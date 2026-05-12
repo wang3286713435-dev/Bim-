@@ -44,9 +44,9 @@ ssh -o BatchMode=yes "${TARGET_HOST}" "
   runuser -u '${REMOTE_RUN_USER}' -- bash -lc 'cd \"${REMOTE_DIR}/client\" && npm run build && cd \"${REMOTE_DIR}/server\" && npm run build' &&
   systemctl restart '${REMOTE_SERVICE}' &&
   sleep 3 &&
-  ROOT_STATUS=\$(curl -s -o /tmp/bim_tender_root_check.html -w '%{http_code}' http://localhost:3001/) &&
-  AUTH_STATUS=\$(curl -s -o /tmp/bim_tender_auth_check.json -w '%{http_code}' http://localhost:3001/api/auth/session) &&
-  HEALTH_STATUS=\$(curl -s -o /tmp/bim_tender_health_check.json -w '%{http_code}' http://localhost:3001/api/health || true) &&
+  ROOT_STATUS=\$(curl -s -H 'x-forwarded-proto: https' -o /tmp/bim_tender_root_check.html -w '%{http_code}' http://localhost:3001/) &&
+  AUTH_STATUS=\$(curl -s -H 'x-forwarded-proto: https' -o /tmp/bim_tender_auth_check.json -w '%{http_code}' http://localhost:3001/api/auth/session) &&
+  HEALTH_STATUS=\$(curl -s -H 'x-forwarded-proto: https' -o /tmp/bim_tender_health_check.json -w '%{http_code}' http://localhost:3001/api/health || true) &&
   [ \"\${ROOT_STATUS}\" = '200' ] &&
   [ \"\${AUTH_STATUS}\" = '401' ] &&
   if [ \"\${HEALTH_STATUS}\" = '200' ]; then

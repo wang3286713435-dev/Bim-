@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.6.20
+
+发布时间：2026-05-12
+状态：Cloudflare HTTPS 兼容热修
+
+已完成：
+
+- 修复正式域名开启 `FORCE_HTTPS` 后，Cloudflare 透传 HTTPS 请求时仍可能被后端误判为非 HTTPS、从而出现重复 `301` 的问题。
+- 后端现在会同时识别：
+  - `req.secure`
+  - `x-forwarded-proto=https`
+  - `cf-visitor: {"scheme":"https"}`
+- 这样在 Cloudflare 反代场景下，`https://tender.zhuoyusmart.top` 可以正常登录和访问，而 `http://` 访问仍会被安全跳转到 `https://`。
+
+## v1.6.19
+
+发布时间：2026-05-12
+状态：正式域名与 HTTPS 收口
+
+已完成：
+
+- 生产配置切换到正式域名 `https://tender.zhuoyusmart.top`。
+- 登录 Cookie 已切到 `Secure` 模式，只通过 HTTPS 传输。
+- 新增可选的 `FORCE_HTTPS` 重定向开关；开启后，用户误用 `http://` 访问时会自动跳到 `https://`。
+- 这样可以避免“正式域名已上线，但访问明文 HTTP 时登录态无法建立”的体验问题。
+
 ## v1.6.18
 
 发布时间：2026-05-12
