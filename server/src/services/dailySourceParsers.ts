@@ -17,6 +17,33 @@ function normalizeText(value: string): string {
     .trim();
 }
 
+export function extractReadableContentFromHtml(html: string): string {
+  const $ = cheerio.load(html);
+  const selectors = [
+    'article .entry-content',
+    '.entry-content',
+    '.post-content',
+    '.article-content',
+    '.single-post-content',
+    '.content',
+    'main article',
+    'article',
+    'main',
+    'body',
+  ];
+
+  let best = '';
+  for (const selector of selectors) {
+    $(selector).each((_, element) => {
+      const text = normalizeText($(element).text());
+      if (text.length > best.length) best = text;
+    });
+    if (best.length >= 400) break;
+  }
+
+  return best;
+}
+
 function toAbsoluteUrl(baseUrl: string, href: string): string {
   return new URL(href, baseUrl).toString();
 }

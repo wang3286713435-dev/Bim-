@@ -188,7 +188,9 @@ model DailyReport {
   title            String
   intro            String
   executiveSummary String
+  highlightsJson   String         @default("[]")
   sectionsJson     String
+  metaJson         String         @default("{}")
   status           String         @default("completed")
   sourceCount      Int            @default(0)
   articleCount     Int            @default(0)
@@ -212,6 +214,7 @@ model DailyArticle {
   category          String?
   fetchStatus       String                 @default("fetched")
   contentHash       String
+  recencyBucket     String                 @default("today")
   keywordHitPreview String?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt

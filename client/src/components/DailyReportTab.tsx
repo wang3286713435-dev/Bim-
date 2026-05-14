@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyReport } from '../services/api';
 import { formatDateTime, relativeTime } from '../utils/relativeTime';
@@ -60,6 +60,25 @@ function filterSections(report: DailyReport | null, selectedSource: string, sele
     .filter((section) => section.items.length > 0);
 }
 
+function getRecencyMeta(bucket: 'today' | 'recent' | 'watch' | undefined, isLight: boolean) {
+  if (bucket === 'today') {
+    return {
+      label: '今日新增',
+      tone: isLight ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-emerald-300/20 bg-emerald-500/10 text-emerald-100'
+    };
+  }
+  if (bucket === 'recent') {
+    return {
+      label: '近 3 日补充',
+      tone: isLight ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-amber-300/20 bg-amber-500/10 text-amber-100'
+    };
+  }
+  return {
+    label: '近 7 日延续关注',
+    tone: isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.05] text-slate-200'
+  };
+}
+
 export default function DailyReportTab({
   themeMode,
   reports,
@@ -80,6 +99,7 @@ export default function DailyReportTab({
   const selectedTerms = getSelectedTerms(keywords, selectedKeyword);
   const sections = filterSections(selectedReport, selectedSource, selectedKeyword);
   const sourceOptions = health?.sources || [];
+  const [showAppendix, setShowAppendix] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -125,8 +145,8 @@ export default function DailyReportTab({
               <div className="mt-2 text-2xl font-semibold">{selectedReport?.sourceCount ?? 0}</div>
             </div>
             <div className={cn('rounded-2xl border px-4 py-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">资讯条数</div>
-              <div className="mt-2 text-2xl font-semibold">{selectedReport?.articleCount ?? 0}</div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">候选 / 入选</div>
+              <div className="mt-2 text-2xl font-semibold">{selectedReport ? `${selectedReport.meta.candidateArticleCount} / ${selectedReport.articleCount}` : '0 / 0'}</div>
             </div>
             <div className={cn('rounded-2xl border px-4 py-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
               <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">最近生成</div>
@@ -134,9 +154,9 @@ export default function DailyReportTab({
               <div className="mt-1 text-xs text-slate-500">{selectedReport ? formatDateTime(selectedReport.generatedAt) : ''}</div>
             </div>
             <div className={cn('rounded-2xl border px-4 py-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">任务状态</div>
-              <div className="mt-2 text-sm font-medium">{isRunning ? '正在生成' : health?.latestRun?.status === 'completed' ? '已完成' : '待生成'}</div>
-              <div className="mt-1 text-xs text-slate-500">{health?.latestRun?.completedAt ? formatDateTime(health.latestRun.completedAt) : '等待下一次调度'}</div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">今日新增 / 延续</div>
+              <div className="mt-2 text-sm font-medium">{selectedReport ? `${selectedReport.meta.freshArticleCount} / ${selectedReport.meta.supplementalArticleCount}` : '0 / 0'}</div>
+              <div className="mt-1 text-xs text-slate-500">{isRunning ? '正在生成今日日报' : health?.latestRun?.completedAt ? formatDateTime(health.latestRun.completedAt) : '等待下一次调度'}</div>
             </div>
           </div>
         </div>
@@ -227,7 +247,7 @@ export default function DailyReportTab({
                 >
                   <div className="text-xs uppercase tracking-[0.14em] text-slate-500">{report.reportDate.slice(0, 10)}</div>
                   <div className="mt-2 line-clamp-2 text-sm font-medium">{report.title}</div>
-                  <div className="mt-2 text-xs text-slate-500">{report.articleCount} 条资讯 · {report.sourceCount} 个来源</div>
+                  <div className="mt-2 text-xs text-slate-500">{report.articleCount} 条入选 · {report.meta.candidateArticleCount} 条候选</div>
                 </button>
               );
             })}
@@ -246,9 +266,40 @@ export default function DailyReportTab({
           )}>
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-amber-300" />
+              <h3 className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>管理层摘要</h3>
+            </div>
+            <p className={cn('mt-3 text-sm leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
+              {selectedReport?.executiveSummary || '当前还没有生成可阅读的日报正文。'}
+            </p>
+
+            {selectedReport?.highlights?.length ? (
+              <div className="mt-5 grid gap-3 lg:grid-cols-2">
+                {selectedReport.highlights.map((item, index) => (
+                  <div
+                    key={`${item}-${index}`}
+                    className={cn(
+                      'rounded-2xl border p-4',
+                      isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
+                    )}
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">今日重点 {index + 1}</div>
+                    <p className="mt-2 text-sm leading-6">
+                      {renderHighlightedByTerms(item, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className={cn(
+            'rounded-[24px] border p-5 shadow-[0_18px_60px_rgba(0,0,0,0.12)]',
+            isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.03]'
+          )}>
+            <div className="flex items-center gap-2">
+              <Clock3 className="h-4 w-4 text-cyan-300" />
               <h3 className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>当日报告正文</h3>
             </div>
-            <p className={cn('mt-3 text-sm leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>{selectedReport?.executiveSummary || '当前还没有生成可阅读的日报正文。'}</p>
 
             <div className="mt-5 space-y-5">
               {sections.map((section) => (
@@ -257,39 +308,45 @@ export default function DailyReportTab({
                     <Clock3 className="h-4 w-4 text-cyan-300" />
                     <h4 className={cn('text-sm font-semibold', isLight ? 'text-slate-900' : 'text-white')}>{section.title}</h4>
                   </div>
-                  <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>{renderHighlightedByTerms(section.summary, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}</p>
+                  <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                    {renderHighlightedByTerms(section.summary, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                  </p>
                   <div className="mt-4 space-y-3">
-                    {section.items.map((item) => (
-                      <div key={`${section.title}-${item.url}`} className={cn('rounded-2xl border p-3', isLight ? 'border-slate-200 bg-white' : 'border-white/8 bg-white/[0.03]')}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/[0.04] text-slate-300')}>{item.sourceName}</span>
-                              {item.matchedKeywords.map((hit) => (
-                                <span key={`${item.url}-${hit.keywordId}`} className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100')}>
-                                  {hit.label} {hit.count}
-                                </span>
-                              ))}
+                    {section.items.map((item) => {
+                      const recency = getRecencyMeta(item.recencyBucket, isLight);
+                      return (
+                        <div key={`${section.title}-${item.url}`} className={cn('rounded-2xl border p-3', isLight ? 'border-slate-200 bg-white' : 'border-white/8 bg-white/[0.03]')}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-white/10 bg-white/[0.04] text-slate-300')}>{item.sourceName}</span>
+                                <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', recency.tone)}>{recency.label}</span>
+                                {item.matchedKeywords.map((hit) => (
+                                  <span key={`${item.url}-${hit.keywordId}`} className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100')}>
+                                    {hit.label} {hit.count}
+                                  </span>
+                                ))}
+                              </div>
+                              <h5 className={cn('mt-3 text-base font-semibold leading-7', isLight ? 'text-slate-900' : 'text-white')}>
+                                {renderHighlightedByTerms(item.title, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                              </h5>
+                              <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                                {renderHighlightedByTerms(item.summary || item.excerpt || '', selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                              </p>
                             </div>
-                            <h5 className={cn('mt-3 text-base font-semibold leading-7', isLight ? 'text-slate-900' : 'text-white')}>
-                              {renderHighlightedByTerms(item.title, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                            </h5>
-                            <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
-                              {renderHighlightedByTerms(item.summary || item.excerpt || '', selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                            </p>
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={cn('inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition', isLight ? 'border-slate-200 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.04] text-slate-200 hover:text-cyan-100')}
+                            >
+                              原文
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
                           </div>
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={cn('inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition', isLight ? 'border-slate-200 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.04] text-slate-200 hover:text-cyan-100')}
-                          >
-                            原文
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -301,54 +358,71 @@ export default function DailyReportTab({
             </div>
           </div>
 
-          <div className={cn(
-            'rounded-[24px] border p-5 shadow-[0_18px_60px_rgba(0,0,0,0.12)]',
-            isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.03]'
-          )}>
-            <div className="flex items-center gap-2">
-              <FileStack className="h-4 w-4 text-cyan-300" />
-              <h3 className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>原始资讯列表</h3>
-            </div>
-            <div className="mt-4 space-y-3">
-              {articles.map((item) => (
-                <div key={item.id} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-white/[0.03]')}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/[0.04] text-slate-300')}>{item.sourceName}</span>
-                    {item.matchedKeywords.length > 0 ? item.matchedKeywords.map((hit) => (
-                      <span key={`${item.id}-${hit.id}`} className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100')}>
-                        {hit.label} {hit.count}
-                      </span>
-                    )) : (
-                      <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/[0.04] text-slate-400')}>未命中关键词</span>
-                    )}
-                    <span className="text-xs text-slate-500">{item.publishedAt ? formatDateTime(item.publishedAt) : '发布时间待补齐'}</span>
-                  </div>
-                  <h4 className={cn('mt-3 text-base font-semibold leading-7', isLight ? 'text-slate-900' : 'text-white')}>
-                    {renderHighlightedByTerms(item.title, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                  </h4>
-                  <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
-                    {renderHighlightedByTerms(item.summary || item.excerpt || '', selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                  </p>
-                  <div className="mt-3">
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={cn('inline-flex items-center gap-1 text-sm font-medium', isLight ? 'text-cyan-700' : 'text-cyan-200')}
-                    >
-                      打开原文
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
+          <details
+            open={showAppendix}
+            onToggle={(event) => setShowAppendix((event.currentTarget as HTMLDetailsElement).open)}
+            className={cn(
+              'rounded-[24px] border p-5 shadow-[0_18px_60px_rgba(0,0,0,0.12)]',
+              isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.03]'
+            )}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <FileStack className="h-4 w-4 text-cyan-300" />
+                  <h3 className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>来源附录</h3>
                 </div>
-              ))}
+                <p className={cn('mt-1 text-sm', isLight ? 'text-slate-500' : 'text-slate-400')}>
+                  原始资讯用于追溯来源与后续飞书推送，默认收起，不占日报主视图。
+                </p>
+              </div>
+              <ChevronDown className={cn('h-4 w-4 shrink-0 transition', showAppendix && 'rotate-180')} />
+            </summary>
+
+            <div className="mt-4 space-y-3">
+              {articles.map((item) => {
+                const recency = getRecencyMeta(item.recencyBucket, isLight);
+                return (
+                  <div key={item.id} className={cn('rounded-2xl border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/8 bg-white/[0.03]')}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/[0.04] text-slate-300')}>{item.sourceName}</span>
+                      <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', recency.tone)}>{recency.label}</span>
+                      {item.matchedKeywords.length > 0 ? item.matchedKeywords.map((hit) => (
+                        <span key={`${item.id}-${hit.id}`} className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-cyan-200 bg-cyan-50 text-cyan-800' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100')}>
+                          {hit.label} {hit.count}
+                        </span>
+                      )) : (
+                        <span className={cn('rounded-full border px-2.5 py-1 text-[11px]', isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/[0.04] text-slate-400')}>未命中关键词</span>
+                      )}
+                      <span className="text-xs text-slate-500">{item.publishedAt ? formatDateTime(item.publishedAt) : '发布时间待补齐'}</span>
+                    </div>
+                    <h4 className={cn('mt-3 text-base font-semibold leading-7', isLight ? 'text-slate-900' : 'text-white')}>
+                      {renderHighlightedByTerms(item.title, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                    </h4>
+                    <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
+                      {renderHighlightedByTerms(item.summary || item.excerpt || '', selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                    </p>
+                    <div className="mt-3">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cn('inline-flex items-center gap-1 text-sm font-medium', isLight ? 'text-cyan-700' : 'text-cyan-200')}
+                      >
+                        打开原文
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
               {articles.length === 0 && !isLoading && (
                 <div className={cn('rounded-2xl border border-dashed px-4 py-8 text-center text-sm', isLight ? 'border-slate-200 text-slate-500' : 'border-white/10 text-slate-400')}>
                   当前筛选条件下暂无资讯条目。
                 </div>
               )}
             </div>
-          </div>
+          </details>
         </section>
       </div>
     </div>

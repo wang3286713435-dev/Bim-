@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildManagementHighlights,
   buildDailyKeywordStats,
   buildDailyReportDraft,
   classifyDailyArticleSection,
   filterDailyArticlesByKeyword,
+  scoreDailyArticle,
+  selectEditorialDailyArticles,
   type DailyArticleDraft
 } from '../services/dailyReportBuilder.js';
 
@@ -16,6 +19,7 @@ const ARTICLES: DailyArticleDraft[] = [
     summary: '上海发布 BIM 应用指南，偏政策标准。',
     url: 'https://www.shbimcenter.org/shanghaizhengce/20213305.html',
     publishedAt: new Date('2026-05-15T00:00:00.000Z'),
+    recencyBucket: 'today',
     matchedKeywords: [{ keywordId: 'k1', label: 'BIM', slug: 'bim', category: 'core', count: 2, matchedTexts: ['BIM'], hitFields: ['title'] }],
   },
   {
@@ -26,6 +30,7 @@ const ARTICLES: DailyArticleDraft[] = [
     summary: 'Fuzor 发布面向施工模拟的产品型内容。',
     url: 'https://www.bim4d.com.cn/faq/fuzor-jcimhd.html',
     publishedAt: new Date('2026-05-14T00:00:00.000Z'),
+    recencyBucket: 'recent',
     matchedKeywords: [{ keywordId: 'k4', label: '4D', slug: '4d', category: 'software', count: 1, matchedTexts: ['4D'], hitFields: ['excerpt'] }],
   },
   {
@@ -36,6 +41,7 @@ const ARTICLES: DailyArticleDraft[] = [
     summary: '国际标准组织发布 openBIM 相关文章。',
     url: 'https://www.buildingsmart.org/example',
     publishedAt: new Date('2026-05-13T00:00:00.000Z'),
+    recencyBucket: 'watch',
     matchedKeywords: [
       { keywordId: 'k5', label: 'OpenBIM', slug: 'openbim', category: 'standard', count: 1, matchedTexts: ['openBIM'], hitFields: ['title'] },
       { keywordId: 'k6', label: 'IFC', slug: 'ifc', category: 'standard', count: 1, matchedTexts: ['IFC'], hitFields: ['excerpt'] }
@@ -71,13 +77,39 @@ describe('filterDailyArticlesByKeyword', () => {
 });
 
 describe('buildDailyReportDraft', () => {
-  it('builds a multi-section report with keyword overview', () => {
-    const draft = buildDailyReportDraft(new Date('2026-05-15T09:00:00.000Z'), ARTICLES);
+  it('builds a multi-section report with management highlights and meta', () => {
+    const draft = buildDailyReportDraft(new Date('2026-05-15T09:00:00.000Z'), ARTICLES, 6);
 
     expect(draft.title).toContain('BIM');
     expect(draft.sourceCount).toBe(3);
     expect(draft.articleCount).toBe(3);
+    expect(draft.highlights.length).toBeGreaterThan(0);
+    expect(draft.meta.candidateArticleCount).toBe(6);
+    expect(draft.meta.supplementalArticleCount).toBe(2);
     expect(draft.sections.map((item) => item.title)).toEqual(expect.arrayContaining(['政策与标准', '软件与产品动态', '国际标准 / openBIM']));
     expect(draft.keywordStats).toEqual(expect.arrayContaining([expect.objectContaining({ label: 'BIM' })]));
+  });
+});
+
+describe('editorial selection helpers', () => {
+  it('scores policy articles above lower-signal software tutorials', () => {
+    expect(scoreDailyArticle(ARTICLES[0])).toBeGreaterThan(scoreDailyArticle(ARTICLES[1]));
+  });
+
+  it('prefers source-diverse articles when selecting editorial output', () => {
+    const overloaded = [
+      ARTICLES[0],
+      { ...ARTICLES[0], url: 'https://www.shbimcenter.org/another', title: '上海 BIM 试点推进通知', summary: '政策延续更新。' },
+      ARTICLES[1],
+      ARTICLES[2],
+    ];
+    const selected = selectEditorialDailyArticles(overloaded, 3);
+    expect(new Set(selected.map((item) => item.sourceId)).size).toBe(3);
+  });
+
+  it('builds concise management highlights from selected articles', () => {
+    const highlights = buildManagementHighlights(ARTICLES);
+    expect(highlights).toHaveLength(3);
+    expect(highlights[0]).toContain('政策面');
   });
 });

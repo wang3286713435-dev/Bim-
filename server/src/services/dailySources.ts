@@ -1,8 +1,10 @@
 import axios from 'axios';
 import { createHash } from 'node:crypto';
+import * as cheerio from 'cheerio';
 import type { DailySourceId } from './dailyReportRegistry.js';
 import { DAILY_SOURCE_DEFINITIONS } from './dailyReportRegistry.js';
 import {
+  extractReadableContentFromHtml,
   parseBimboxTopicHtml,
   parseChinaBimListResponse,
   parseFuzorSupportHtml,
@@ -17,6 +19,10 @@ export type DailySourceArticle = ParsedDailySourceRow & {
   contentHash: string;
 };
 
+export type DailySourceArticleWithBucket = DailySourceArticle & {
+  recencyBucket: 'today' | 'recent' | 'watch';
+};
+
 export type DailySourceFetchResult = {
   sourceId: DailySourceId;
   sourceName: string;
@@ -28,6 +34,11 @@ export type DailySourceFetchResult = {
 
 const REQUEST_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+};
+
+const CHINA_BIM_DETAIL_HEADERS = {
+  ...REQUEST_HEADERS,
+  'jnpf-origin': 'pc'
 };
 
 function trimText(value: string): string {
@@ -138,6 +149,65 @@ async function fetchChinaBimSource(sourceName: string): Promise<DailySourceArtic
   return dedupeRows('chinabim', sourceName, rows);
 }
 
+function chooseLongestText($: cheerio.CheerioAPI, selectors: string[]): string {
+  let best = '';
+  for (const selector of selectors) {
+    $(selector).each((_, element) => {
+      const text = trimText($(element).text());
+      if (text.length > best.length) best = text;
+    });
+    if (best.length >= 600) break;
+  }
+  return best;
+}
+
+async function fetchChinaBimDetailText(article: DailySourceArticle): Promise<string> {
+  const id = article.url.match(/\/news\/([^/?#]+)/)?.[1];
+  if (!id) return '';
+  const response = await axios.get(
+    `https://www.chinabim.com/prefixEbc/api/example/SupplyRelease/ciipReleaseNewsCenter/detail/${id}`,
+    { headers: CHINA_BIM_DETAIL_HEADERS, timeout: 20000 }
+  );
+  const detail = response.data?.data || {};
+  return trimText([detail.title, detail.digest, detail.content].filter(Boolean).join(' '));
+}
+
+async function fetchGenericDetailText(article: DailySourceArticle): Promise<string> {
+  const response = await axios.get(article.url, { headers: REQUEST_HEADERS, timeout: 20000 });
+  const extracted = extractReadableContentFromHtml(response.data);
+  if (extracted) return extracted;
+  const $ = cheerio.load(response.data);
+  return chooseLongestText($, ['article', 'main', 'body']);
+}
+
+export async function fetchDailyArticleDetailText(article: DailySourceArticle): Promise<string> {
+  try {
+    if (article.sourceId === 'chinabim') {
+      return await fetchChinaBimDetailText(article);
+    }
+    return await fetchGenericDetailText(article);
+  } catch {
+    return article.excerpt || '';
+  }
+}
+
+export function getDailyRecencyBucket(
+  publishedAt: Date | null,
+  referenceDate = new Date(),
+  primaryHours = 24,
+  fallbackHours = 72,
+  extendedHours = 168
+): 'today' | 'recent' | 'watch' | 'stale' {
+  if (!publishedAt) return 'stale';
+  const ageMs = referenceDate.getTime() - publishedAt.getTime();
+  if (ageMs < 0) return 'today';
+  const ageHours = ageMs / (60 * 60 * 1000);
+  if (ageHours <= primaryHours) return 'today';
+  if (ageHours <= fallbackHours) return 'recent';
+  if (ageHours <= extendedHours) return 'watch';
+  return 'stale';
+}
+
 export async function fetchDailySourceArticles(sourceId: DailySourceId): Promise<DailySourceFetchResult> {
   const definition = DAILY_SOURCE_DEFINITIONS.find((item) => item.id === sourceId);
   if (!definition) {
@@ -183,11 +253,44 @@ export async function fetchDailySourceArticles(sourceId: DailySourceId): Promise
   }
 }
 
-export function pickDailySourceWindow(rows: DailySourceArticle[], primaryHours: number, fallbackHours: number, maxItems: number, referenceDate = new Date()): DailySourceArticle[] {
-  const primaryCutoff = new Date(referenceDate.getTime() - primaryHours * 60 * 60 * 1000);
-  const fallbackCutoff = new Date(referenceDate.getTime() - fallbackHours * 60 * 60 * 1000);
-  const sorted = [...rows].sort((a, b) => (b.publishedAt?.getTime() || 0) - (a.publishedAt?.getTime() || 0));
-  const withinPrimary = sorted.filter((item) => item.publishedAt && item.publishedAt >= primaryCutoff);
-  if (withinPrimary.length > 0) return withinPrimary.slice(0, maxItems);
-  return sorted.filter((item) => item.publishedAt && item.publishedAt >= fallbackCutoff).slice(0, maxItems);
+export function pickDailySourceWindow(
+  rows: DailySourceArticle[],
+  primaryHours: number,
+  fallbackHours: number,
+  maxItems: number,
+  referenceDate = new Date(),
+  extendedHours = 168,
+  minItems = 2
+): DailySourceArticleWithBucket[] {
+  const sorted = [...rows]
+    .map((item) => ({
+      ...item,
+      recencyBucket: getDailyRecencyBucket(item.publishedAt, referenceDate, primaryHours, fallbackHours, extendedHours)
+    }))
+    .filter((item): item is DailySourceArticleWithBucket => item.recencyBucket !== 'stale')
+    .sort((a, b) => (b.publishedAt?.getTime() || 0) - (a.publishedAt?.getTime() || 0));
+
+  const today = sorted.filter((item) => item.recencyBucket === 'today');
+  const recent = sorted.filter((item) => item.recencyBucket === 'recent');
+  const watch = sorted.filter((item) => item.recencyBucket === 'watch');
+
+  const selected: DailySourceArticleWithBucket[] = [];
+  const seen = new Set<string>();
+
+  const pushRows = (items: DailySourceArticleWithBucket[], limit: number) => {
+    for (const item of items) {
+      if (selected.length >= limit) break;
+      if (seen.has(item.url)) continue;
+      selected.push(item);
+      seen.add(item.url);
+    }
+  };
+
+  pushRows(today, maxItems);
+  if (selected.length < minItems) pushRows(recent, Math.min(maxItems, minItems));
+  if (selected.length < minItems) pushRows(watch, Math.min(maxItems, minItems));
+  if (selected.length < maxItems) pushRows(recent, maxItems);
+  if (selected.length < maxItems) pushRows(watch, maxItems);
+
+  return selected;
 }

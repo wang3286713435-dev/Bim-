@@ -124,6 +124,7 @@ export interface DailyArticle {
   url: string;
   publishedAt: string | null;
   category: string | null;
+  recencyBucket?: 'today' | 'recent' | 'watch';
   keywordHitPreview: string | null;
   matchedKeywords: DailyMatchedKeyword[];
 }
@@ -136,12 +137,13 @@ export interface DailyReportSection {
     sourceName: string;
     title: string;
     excerpt: string;
-    summary: string;
-    url: string;
-    publishedAt: string | null;
-    keywordHitPreview: string | null;
-    matchedKeywords: Array<{
-      keywordId: string;
+      summary: string;
+      url: string;
+      publishedAt: string | null;
+      recencyBucket?: 'today' | 'recent' | 'watch';
+      keywordHitPreview: string | null;
+      matchedKeywords: Array<{
+        keywordId: string;
       label: string;
       slug: string;
       category: string | null;
@@ -158,7 +160,15 @@ export interface DailyReport {
   title: string;
   intro: string;
   executiveSummary: string;
+  highlights: string[];
   sections: DailyReportSection[];
+  meta: {
+    candidateArticleCount: number;
+    selectedArticleCount: number;
+    freshArticleCount: number;
+    supplementalArticleCount: number;
+    sourceCount: number;
+  };
   status: string;
   sourceCount: number;
   articleCount: number;

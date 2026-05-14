@@ -1,14 +1,31 @@
 import { prisma } from '../db.js';
 import { generateStructuredJson } from './llmProvider.js';
 import { buildKeywordHitPreview, matchDailyKeywords, type DailyKeywordHit } from './dailyKeywordMatcher.js';
-import { buildDailyReportDraft, type DailyArticleDraft, type DailyReportDraft, type DailySectionTitle } from './dailyReportBuilder.js';
-import { DAILY_SOURCE_DEFINITIONS, type DailySourceId } from './dailyReportRegistry.js';
-import { fetchDailySourceArticles, pickDailySourceWindow, type DailySourceArticle } from './dailySources.js';
+import {
+  buildDailyReportDraft,
+  selectEditorialDailyArticles,
+  type DailyArticleDraft,
+  type DailyRecencyBucket,
+  type DailyReportDraft,
+  type DailySectionTitle
+} from './dailyReportBuilder.js';
+import { type DailySourceId } from './dailyReportRegistry.js';
+import {
+  fetchDailyArticleDetailText,
+  fetchDailySourceArticles,
+  pickDailySourceWindow,
+  type DailySourceArticle,
+  type DailySourceArticleWithBucket
+} from './dailySources.js';
 
 const DAILY_REPORT_LOOKBACK_HOURS = Math.max(1, Number.parseInt(process.env.DAILY_REPORT_LOOKBACK_HOURS || '24', 10) || 24);
-const DAILY_REPORT_FALLBACK_LOOKBACK_HOURS = Math.max(DAILY_REPORT_LOOKBACK_HOURS, Number.parseInt(process.env.DAILY_REPORT_FALLBACK_LOOKBACK_HOURS || '48', 10) || 48);
-const DAILY_REPORT_ARTICLES_PER_SOURCE = Math.max(1, Number.parseInt(process.env.DAILY_REPORT_ARTICLES_PER_SOURCE || '6', 10) || 6);
+const DAILY_REPORT_FALLBACK_LOOKBACK_HOURS = Math.max(DAILY_REPORT_LOOKBACK_HOURS, Number.parseInt(process.env.DAILY_REPORT_FALLBACK_LOOKBACK_HOURS || '72', 10) || 72);
+const DAILY_REPORT_EXTENDED_LOOKBACK_HOURS = Math.max(DAILY_REPORT_FALLBACK_LOOKBACK_HOURS, Number.parseInt(process.env.DAILY_REPORT_EXTENDED_LOOKBACK_HOURS || '168', 10) || 168);
+const DAILY_REPORT_ARTICLES_PER_SOURCE = Math.max(1, Number.parseInt(process.env.DAILY_REPORT_ARTICLES_PER_SOURCE || '4', 10) || 4);
+const DAILY_REPORT_MIN_ARTICLES_PER_SOURCE = Math.max(1, Number.parseInt(process.env.DAILY_REPORT_MIN_ARTICLES_PER_SOURCE || '2', 10) || 2);
+const DAILY_REPORT_FINAL_ARTICLE_LIMIT = Math.max(3, Number.parseInt(process.env.DAILY_REPORT_FINAL_ARTICLE_LIMIT || '8', 10) || 8);
 const DAILY_REPORT_AI_CONCURRENCY = Math.max(1, Math.min(4, Number.parseInt(process.env.DAILY_REPORT_AI_CONCURRENCY || '2', 10) || 2));
+const DAILY_REPORT_DETAIL_CONCURRENCY = Math.max(1, Math.min(4, Number.parseInt(process.env.DAILY_REPORT_DETAIL_CONCURRENCY || '2', 10) || 2));
 const DAILY_REPORT_TIMEZONE = process.env.DAILY_REPORT_TIMEZONE || 'Asia/Shanghai';
 
 type DailyKeywordRecord = {
@@ -37,6 +54,14 @@ type StoredDailySection = {
   title: DailySectionTitle;
   summary: string;
   items: StoredDailySectionItem[];
+};
+
+type StoredDailyMeta = {
+  candidateArticleCount: number;
+  selectedArticleCount: number;
+  freshArticleCount: number;
+  supplementalArticleCount: number;
+  sourceCount: number;
 };
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -84,19 +109,22 @@ function buildFallbackArticleSummary(article: DailySourceArticle): string {
   return excerpt.slice(0, 120);
 }
 
-async function summarizeDailyArticle(article: DailySourceArticle): Promise<string> {
+async function summarizeDailyArticle(
+  article: DailySourceArticle,
+  detailText?: string
+): Promise<string> {
   try {
     const result = await generateStructuredJson<{ summary: string }>([
       {
         role: 'system',
-        content: '你是 BIM 行业资讯编辑。基于标题和摘要，输出 1-2 句、80 字以内的中文资讯摘要。仅输出 JSON：{"summary":"..."}。摘要要说明它属于政策、观点、案例、软件或标准中的哪类信息。'
+        content: '你是 BIM 行业资讯编辑。请阅读给定资讯内容，输出 1-2 句、80 字以内的中文管理摘要。摘要要直接说明这条资讯为什么重要，优先突出政策、趋势、案例、软件或标准影响。仅输出 JSON：{"summary":"..."}。'
       },
       {
         role: 'user',
-        content: `来源：${article.sourceName}\n标题：${article.title}\n摘要：${article.excerpt || '无摘要'}\n发布时间：${article.publishedAt?.toISOString() || '未知'}`
+        content: `来源：${article.sourceName}\n标题：${article.title}\n列表摘要：${article.excerpt || '无摘要'}\n正文摘要：${detailText || '无正文'}\n发布时间：${article.publishedAt?.toISOString() || '未知'}`
       }
     ], {
-      maxTokens: 180,
+      maxTokens: 220,
       temperature: 0.2
     });
     return normalizeText(result.summary || '') || buildFallbackArticleSummary(article);
@@ -121,7 +149,9 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
   return results;
 }
 
-async function buildDailyArticleDrafts(sourceArticles: DailySourceArticle[]): Promise<Array<DailyArticleDraft & { keywordHitPreview: string | null }>> {
+async function buildDailyArticleDrafts(
+  sourceArticles: Array<DailySourceArticleWithBucket & { detailText?: string }>
+): Promise<Array<DailyArticleDraft & { keywordHitPreview: string | null }>> {
   const keywords = await prisma.dailyKeyword.findMany({
     where: { isActive: true },
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }]
@@ -136,7 +166,7 @@ async function buildDailyArticleDrafts(sourceArticles: DailySourceArticle[]): Pr
   }));
 
   return mapWithConcurrency(sourceArticles, DAILY_REPORT_AI_CONCURRENCY, async (article) => {
-    const summary = await summarizeDailyArticle(article);
+    const summary = await summarizeDailyArticle(article, article.detailText);
     const hitResult = matchDailyKeywords({
       title: article.title,
       excerpt: article.excerpt,
@@ -151,6 +181,7 @@ async function buildDailyArticleDrafts(sourceArticles: DailySourceArticle[]): Pr
       summary,
       url: article.url,
       publishedAt: article.publishedAt,
+      recencyBucket: article.recencyBucket,
       matchedKeywords: hitResult.matchedKeywords,
       keywordHitPreview: hitResult.keywordHitPreview
     };
@@ -167,7 +198,7 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
     }>([
       {
         role: 'system',
-        content: '你是 BIM 行业日报主编。根据输入的分区资讯，生成更正式的日报标题、导语、执行摘要和分区小结。只输出 JSON。'
+        content: '你是 BIM 行业日报主编。请根据输入资讯，为管理层生成可直接阅读的 BIM 日报成品。输出更正式的日报标题、导语、执行摘要、3-5 条今日重点，以及分区小结。只输出 JSON。'
       },
       {
         role: 'user',
@@ -180,14 +211,16 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
             items: section.items.slice(0, 4).map((item) => ({
               title: item.title,
               summary: item.summary,
-              sourceName: item.sourceName
+              sourceName: item.sourceName,
+              recencyBucket: item.recencyBucket
             }))
           })),
-          keywordStats: draft.keywordStats
+          keywordStats: draft.keywordStats,
+          meta: draft.meta
         }, null, 2)
       }
     ], {
-      maxTokens: 600,
+      maxTokens: 900,
       temperature: 0.2
     });
 
@@ -197,6 +230,9 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
       title: normalizeText(result.title || draft.title) || draft.title,
       intro: normalizeText(result.intro || draft.intro) || draft.intro,
       executiveSummary: normalizeText(result.executiveSummary || draft.executiveSummary) || draft.executiveSummary,
+      highlights: Array.isArray((result as { highlights?: string[] }).highlights)
+        ? (result as { highlights?: string[] }).highlights!.map((item) => normalizeText(item)).filter(Boolean).slice(0, 5)
+        : draft.highlights,
       sections: draft.sections.map((section) => ({
         ...section,
         summary: sectionSummaryMap.get(section.title) || section.summary
@@ -248,12 +284,20 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
       DAILY_REPORT_LOOKBACK_HOURS,
       DAILY_REPORT_FALLBACK_LOOKBACK_HOURS,
       DAILY_REPORT_ARTICLES_PER_SOURCE,
-      new Date()
+      new Date(),
+      DAILY_REPORT_EXTENDED_LOOKBACK_HOURS,
+      DAILY_REPORT_MIN_ARTICLES_PER_SOURCE
     )
   );
 
-  const draftsWithKeywords = await buildDailyArticleDrafts(pickedRows);
-  const baseDraft = buildDailyReportDraft(reportDate, draftsWithKeywords);
+  const enrichedCandidates = await mapWithConcurrency(pickedRows, DAILY_REPORT_DETAIL_CONCURRENCY, async (article) => ({
+    ...article,
+    detailText: await fetchDailyArticleDetailText(article)
+  }));
+
+  const candidateDrafts = await buildDailyArticleDrafts(enrichedCandidates);
+  const selectedDrafts = selectEditorialDailyArticles(candidateDrafts, DAILY_REPORT_FINAL_ARTICLE_LIMIT);
+  const baseDraft = buildDailyReportDraft(reportDate, selectedDrafts, candidateDrafts.length);
   const finalDraft = await enhanceReportDraftWithAI(baseDraft);
   const sectionsWithPreview: StoredDailySection[] = finalDraft.sections.map((section) => ({
     title: section.title,
@@ -274,7 +318,9 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
               title: finalDraft.title,
               intro: finalDraft.intro,
               executiveSummary: finalDraft.executiveSummary,
+              highlightsJson: JSON.stringify(finalDraft.highlights),
               sectionsJson: JSON.stringify(sectionsWithPreview),
+              metaJson: JSON.stringify(finalDraft.meta),
               status: 'completed',
               sourceCount: finalDraft.sourceCount,
               articleCount: finalDraft.articleCount,
@@ -288,7 +334,9 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
               title: finalDraft.title,
               intro: finalDraft.intro,
               executiveSummary: finalDraft.executiveSummary,
+              highlightsJson: JSON.stringify(finalDraft.highlights),
               sectionsJson: JSON.stringify(sectionsWithPreview),
+              metaJson: JSON.stringify(finalDraft.meta),
               status: 'completed',
               sourceCount: finalDraft.sourceCount,
               articleCount: finalDraft.articleCount,
@@ -301,7 +349,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
         where: { reportId: savedReport.id }
       });
 
-      for (const article of draftsWithKeywords) {
+      for (const article of selectedDrafts) {
         await tx.dailyArticle.create({
           data: {
             sourceId: article.sourceId,
@@ -316,6 +364,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
             fetchStatus: 'fetched',
             contentHash: `${article.sourceId}:${article.url}`,
             keywordHitPreview: article.keywordHitPreview,
+            recencyBucket: article.recencyBucket || 'today',
             keywordHits: {
               create: article.matchedKeywords.map((hit) => ({
                 keywordId: hit.keywordId,
@@ -334,7 +383,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
           status: 'completed',
           reportId: savedReport.id,
           sourceCount: activeSources.length,
-          articleCount: draftsWithKeywords.length,
+          articleCount: selectedDrafts.length,
           sourceSummaryJson: JSON.stringify(sourceSummary),
           completedAt: new Date()
         }
@@ -361,7 +410,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
       data: {
         status: 'failed',
         sourceCount: activeSources.length,
-        articleCount: draftsWithKeywords.length,
+        articleCount: selectedDrafts.length,
         sourceSummaryJson: JSON.stringify(sourceSummary),
         errorMessage: error instanceof Error ? error.message : String(error),
         completedAt: new Date()
@@ -406,6 +455,7 @@ export function serializeDailyArticle(article: DailyArticleWithRelations) {
     url: article!.url,
     publishedAt: article!.publishedAt?.toISOString() || null,
     category: article!.category,
+    recencyBucket: article!.recencyBucket,
     keywordHitPreview: article!.keywordHitPreview,
     matchedKeywords
   };
@@ -417,7 +467,9 @@ export function serializeDailyReportShape(report: {
   title: string;
   intro: string;
   executiveSummary: string;
+  highlightsJson?: string | null;
   sectionsJson: string;
+  metaJson?: string | null;
   status: string;
   sourceCount: number;
   articleCount: number;
@@ -431,7 +483,15 @@ export function serializeDailyReportShape(report: {
     title: report.title,
     intro: report.intro,
     executiveSummary: report.executiveSummary,
+    highlights: safeJsonParse<string[]>(report.highlightsJson, []),
     sections: safeJsonParse<StoredDailySection[]>(report.sectionsJson, []),
+    meta: safeJsonParse<StoredDailyMeta>(report.metaJson, {
+      candidateArticleCount: report.articleCount,
+      selectedArticleCount: report.articleCount,
+      freshArticleCount: report.articleCount,
+      supplementalArticleCount: 0,
+      sourceCount: report.sourceCount,
+    }),
     status: report.status,
     sourceCount: report.sourceCount,
     articleCount: report.articleCount,
