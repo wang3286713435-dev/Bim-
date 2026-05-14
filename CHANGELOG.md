@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.7.0
+
+发布时间：2026-05-14
+状态：`BIM 日报` 独立模块首版
+
+已完成：
+
+- 新增独立的 `BIM 日报` 子系统，与招采机会池、监控词、分析面板并列展示，但数据模型完全隔离：
+  - `DailySource`
+  - `DailyKeyword`
+  - `DailyReport`
+  - `DailyArticle`
+  - `DailyArticleKeywordHit`
+  - `DailyRun`
+- 新增 6 个首批日报信源：
+  - `ChinaBIM`
+  - `BIM建筑网`
+  - `BIMBOX`
+  - `上海 BIM 推广中心`
+  - `Fuzor 官网`
+  - `buildingSMART`
+- 新增日报专用关键词体系与命中显示，默认内置：
+  - `BIM`
+  - `数字孪生`
+  - `CIM`
+  - `Revit`
+  - `智慧运维`
+  - 以及 `OpenBIM / IFC / ACC / 施工模拟 / 4D / VR / 参数化 / 机电 / 装配式`
+- 新增日报专用 API：
+  - `GET /api/daily/today`
+  - `GET /api/daily/reports`
+  - `GET /api/daily/reports/:id`
+  - `GET /api/daily/articles`
+  - `GET /api/daily/keywords`
+  - `GET /api/daily/health`
+  - `POST /api/daily/run`
+- 新增每日 `09:00` BIM 日报 cron，不影响原有招采日扫任务。
+- 前端新增顶级标签 `BIM 日报`，支持：
+  - 查看最新日报
+  - 查看日报历史
+  - 来源筛选
+  - 关键词 chips 筛选
+  - 标题/摘要命中高亮
+  - 查看原始资讯列表与原文链接
+- 本地数据库路径在仓库迁移后已改回相对路径口径，避免 `DATABASE_URL` 因目录移动失效。
+
 ## v1.6.20
 
 发布时间：2026-05-12

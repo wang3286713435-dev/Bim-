@@ -33,10 +33,12 @@ import {
   WalletCards,
   X,
   SunMedium,
-  MoonStar
+  MoonStar,
+  Newspaper
 } from 'lucide-react';
 import {
   authApi,
+  dailyApi,
   healthApi,
   hotspotsApi,
   keywordsApi,
@@ -44,6 +46,10 @@ import {
   triggerHotspotCheck,
   type AuthSession,
   type CrawlRun,
+  type DailyArticle,
+  type DailyHealthStatus,
+  type DailyKeyword,
+  type DailyReport,
   type Hotspot,
   type Keyword,
   type HealthStatus,
@@ -52,6 +58,7 @@ import {
   type Stats
 } from './services/api';
 import { disconnectSocket, onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
+import DailyReportTab from './components/DailyReportTab';
 import FilterSortBar, { defaultFilterState, type FilterState, type SavedFilterView } from './components/FilterSortBar';
 import { BackgroundBeams } from './components/ui/background-beams';
 import { Spotlight } from './components/ui/spotlight';
@@ -59,7 +66,7 @@ import { cn } from './lib/utils';
 import { relativeTime, formatDateTime } from './utils/relativeTime';
 import { sortHotspots } from './utils/sortHotspots';
 
-type TabKey = 'opportunities' | 'dashboard' | 'keywords' | 'search';
+type TabKey = 'opportunities' | 'daily' | 'dashboard' | 'keywords' | 'search';
 type ThemeMode = 'dark' | 'light';
 
 type Bucket = {
@@ -78,6 +85,7 @@ type TrendPoint = {
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string; icon: typeof Radar }> = [
   { key: 'opportunities', label: '投标机会', icon: Gavel },
+  { key: 'daily', label: 'BIM 日报', icon: Newspaper },
   { key: 'dashboard', label: '数据分析', icon: Radar },
   { key: 'keywords', label: '监控词', icon: Target },
   { key: 'search', label: '临时搜索', icon: Search }
@@ -3160,6 +3168,16 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [opsSummary, setOpsSummary] = useState<OpsSummary | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
+  const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
+  const [dailyKeywords, setDailyKeywords] = useState<DailyKeyword[]>([]);
+  const [dailyArticles, setDailyArticles] = useState<DailyArticle[]>([]);
+  const [dailyHealth, setDailyHealth] = useState<DailyHealthStatus | null>(null);
+  const [selectedDailyReport, setSelectedDailyReport] = useState<DailyReport | null>(null);
+  const [selectedDailyReportId, setSelectedDailyReportId] = useState('');
+  const [selectedDailySource, setSelectedDailySource] = useState('');
+  const [selectedDailyKeyword, setSelectedDailyKeyword] = useState('');
+  const [isDailyLoading, setIsDailyLoading] = useState(false);
+  const [isDailyRunning, setIsDailyRunning] = useState(false);
   const [newKeyword, setNewKeyword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
@@ -3532,6 +3550,116 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
       refreshOperationalStatus();
     }
   }, [refreshOperationalStatus]);
+
+  const loadDailyData = useCallback(async (params?: {
+    reportId?: string;
+    source?: string;
+    keyword?: string;
+  }) => {
+    setIsDailyLoading(true);
+    try {
+      const source = params?.source ?? '';
+      const keyword = params?.keyword ?? '';
+      const requestedReportId = params?.reportId ?? '';
+
+      const [reportsData, keywordsData, healthData] = await Promise.all([
+        dailyApi.getReports({
+          page: 1,
+          limit: 30,
+          source: source || undefined,
+          keyword: keyword || undefined,
+        }),
+        dailyApi.getKeywords(),
+        dailyApi.getHealth(),
+      ]);
+
+      setDailyReports(reportsData.data);
+      setDailyKeywords(keywordsData);
+      setDailyHealth(healthData);
+      setIsDailyRunning(Boolean(healthData.queue.running));
+
+      const availableReportIds = new Set(reportsData.data.map((item) => item.id));
+      const fallbackReportId = reportsData.data[0]?.id || healthData.latestReport?.id || '';
+      const nextReportId = requestedReportId && availableReportIds.has(requestedReportId)
+        ? requestedReportId
+        : fallbackReportId;
+
+      if (!nextReportId) {
+        setSelectedDailyReportId('');
+        setSelectedDailyReport(null);
+        setDailyArticles([]);
+        return;
+      }
+
+      setSelectedDailyReportId(nextReportId);
+
+      const [reportData, articlesData] = await Promise.all([
+        dailyApi.getReportById(nextReportId),
+        dailyApi.getArticles({
+          reportId: nextReportId,
+          source: source || undefined,
+          keyword: keyword || undefined,
+          page: 1,
+          limit: 100,
+        }),
+      ]);
+
+      setSelectedDailyReport(reportData);
+      setDailyArticles(articlesData.data);
+    } catch (error) {
+      console.error('Failed to load BIM daily report data:', error);
+      showToast('加载 BIM 日报失败', 'error');
+    } finally {
+      setIsDailyLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (activeTab !== 'daily') return;
+    void loadDailyData({
+      reportId: selectedDailyReportId || undefined,
+      source: selectedDailySource || undefined,
+      keyword: selectedDailyKeyword || undefined,
+    });
+  }, [activeTab, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource]);
+
+  useEffect(() => {
+    if (activeTab !== 'daily' || !dailyHealth?.queue.running) return;
+    const timer = window.setInterval(() => {
+      void loadDailyData({
+        reportId: selectedDailyReportId || undefined,
+        source: selectedDailySource || undefined,
+        keyword: selectedDailyKeyword || undefined,
+      });
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, dailyHealth?.queue.running, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource]);
+
+  const handleRunDailyReport = useCallback(async () => {
+    setIsDailyRunning(true);
+    try {
+      const result = await dailyApi.run();
+      showToast(result.accepted ? '已加入 BIM 日报生成队列' : '日报生成任务已在运行', result.accepted ? 'success' : 'error');
+      await loadDailyData({
+        reportId: selectedDailyReportId || undefined,
+        source: selectedDailySource || undefined,
+        keyword: selectedDailyKeyword || undefined,
+      });
+      if (result.accepted) {
+        window.setTimeout(() => {
+          void loadDailyData({
+            reportId: selectedDailyReportId || undefined,
+            source: selectedDailySource || undefined,
+            keyword: selectedDailyKeyword || undefined,
+          });
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Failed to trigger BIM daily report:', error);
+      showToast('触发 BIM 日报生成失败', 'error');
+      setIsDailyRunning(false);
+    }
+  }, [loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource, showToast]);
 
   const handleSearchFromNotification = useCallback((notification: Notification) => {
     const query = extractNotificationSearchText(notification);
@@ -4194,6 +4322,25 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
               <MonitorLogPanel summary={opsSummary} health={healthStatus} themeMode={themeMode} />
             </aside>
           </div>
+        )}
+
+        {!selectedHotspot && activeTab === 'daily' && (
+          <DailyReportTab
+            themeMode={themeMode}
+            reports={dailyReports}
+            selectedReport={selectedDailyReport}
+            articles={dailyArticles}
+            keywords={dailyKeywords}
+            selectedSource={selectedDailySource}
+            selectedKeyword={selectedDailyKeyword}
+            health={dailyHealth}
+            isLoading={isDailyLoading}
+            isRunning={isDailyRunning || Boolean(dailyHealth?.queue.running)}
+            onSelectReport={setSelectedDailyReportId}
+            onSelectSource={setSelectedDailySource}
+            onSelectKeyword={setSelectedDailyKeyword}
+            onRunReport={handleRunDailyReport}
+          />
         )}
 
         {activeTab === 'dashboard' && (

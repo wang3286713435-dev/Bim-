@@ -93,6 +93,118 @@ export interface Notification {
   createdAt: string;
 }
 
+export interface DailyKeyword {
+  id: string;
+  label: string;
+  slug: string;
+  aliases: string[];
+  category: string | null;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface DailyMatchedKeyword {
+  id: string;
+  label: string;
+  slug: string;
+  category: string | null;
+  count: number;
+}
+
+export interface DailyArticle {
+  id: string;
+  reportId: string;
+  reportDate: string;
+  sourceId: string;
+  sourceName: string;
+  sourceType: string | null;
+  title: string;
+  excerpt: string | null;
+  summary: string | null;
+  url: string;
+  publishedAt: string | null;
+  category: string | null;
+  keywordHitPreview: string | null;
+  matchedKeywords: DailyMatchedKeyword[];
+}
+
+export interface DailyReportSection {
+  title: '政策与标准' | '行业观点与趋势' | '案例与应用' | '软件与产品动态' | '国际标准 / openBIM';
+  summary: string;
+  items: Array<{
+    sourceId: string;
+    sourceName: string;
+    title: string;
+    excerpt: string;
+    summary: string;
+    url: string;
+    publishedAt: string | null;
+    keywordHitPreview: string | null;
+    matchedKeywords: Array<{
+      keywordId: string;
+      label: string;
+      slug: string;
+      category: string | null;
+      count: number;
+      matchedTexts: string[];
+      hitFields: string[];
+    }>;
+  }>;
+}
+
+export interface DailyReport {
+  id: string;
+  reportDate: string;
+  title: string;
+  intro: string;
+  executiveSummary: string;
+  sections: DailyReportSection[];
+  status: string;
+  sourceCount: number;
+  articleCount: number;
+  keywordStats: Array<{
+    keywordId: string;
+    label: string;
+    slug: string;
+    category: string | null;
+    count: number;
+  }>;
+  generatedAt: string;
+  createdAt: string;
+}
+
+export interface DailyHealthStatus {
+  latestRun: {
+    id: string;
+    triggerType: string;
+    status: string;
+    sourceCount: number;
+    articleCount: number;
+    errorMessage: string | null;
+    startedAt: string;
+    completedAt: string | null;
+  } | null;
+  latestReport: DailyReport | null;
+  sources: Array<{
+    id: string;
+    name: string;
+    homepage: string;
+    listUrl: string;
+    sourceType: string;
+    isActive: boolean;
+    status: 'healthy' | 'degraded' | 'unknown';
+    resultCount: number;
+    elapsedMs: number;
+    errorMessage: string | null;
+  }>;
+  queue: {
+    running: boolean;
+    lastStartedAt?: string;
+    lastFinishedAt?: string;
+    lastError?: string;
+  };
+}
+
 export interface Stats {
   total: number;
   totalAll?: number;
@@ -409,7 +521,17 @@ export interface HealthStatus {
     intervalHours: number;
     description: string;
   };
+  dailyReportScheduler?: {
+    cron: string;
+    description: string;
+  };
   hotspotCheckQueue: {
+    running: boolean;
+    lastStartedAt?: string;
+    lastFinishedAt?: string;
+    lastError?: string;
+  };
+  dailyReportQueue?: {
     running: boolean;
     lastStartedAt?: string;
     lastFinishedAt?: string;
@@ -474,6 +596,58 @@ export const authApi = {
 
 export const healthApi = {
   get: () => request<HealthStatus>('/health')
+};
+
+export const dailyApi = {
+  getToday: () => request<{ report: DailyReport | null; articles: DailyArticle[] }>('/daily/today'),
+
+  getReports: (params?: {
+    page?: number;
+    limit?: number;
+    source?: string;
+    keyword?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== '') searchParams.append(key, String(value));
+      });
+    }
+    return request<{ data: DailyReport[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>(
+      `/daily/reports?${searchParams}`
+    );
+  },
+
+  getReportById: (id: string) => request<DailyReport>(`/daily/reports/${id}`),
+
+  getArticles: (params?: {
+    page?: number;
+    limit?: number;
+    reportId?: string;
+    reportDate?: string;
+    source?: string;
+    keyword?: string;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== '') searchParams.append(key, String(value));
+      });
+    }
+    return request<{ data: DailyArticle[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>(
+      `/daily/articles?${searchParams}`
+    );
+  },
+
+  getKeywords: () => request<DailyKeyword[]>('/daily/keywords'),
+
+  getHealth: () => request<DailyHealthStatus>('/daily/health'),
+
+  run: () => request<{ accepted: boolean; message: string; state: DailyHealthStatus['queue'] }>('/daily/run', {
+    method: 'POST'
+  }),
 };
 
 // Keywords API

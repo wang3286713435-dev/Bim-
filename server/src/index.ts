@@ -10,11 +10,14 @@ import { fileURLToPath } from 'node:url';
 
 import { prisma } from './db.js';
 import authRouter from './routes/auth.js';
+import dailyRouter from './routes/daily.js';
 import keywordsRouter from './routes/keywords.js';
 import hotspotsRouter from './routes/hotspots.js';
 import settingsRouter from './routes/settings.js';
 import notificationsRouter from './routes/notifications.js';
+import { getDailyReportQueueState, startDailyReportInBackground } from './jobs/dailyReportQueue.js';
 import { getHotspotCheckQueueState, startHotspotCheckInBackground } from './jobs/hotspotCheckQueue.js';
+import { ensureDefaultDailyReportData } from './startup/defaultDailyReports.js';
 import { ensureDefaultKeywords } from './startup/defaultKeywords.js';
 import { ensureDefaultSettings } from './startup/defaultSettings.js';
 import { getRuntimeConfig } from './services/runtimeConfig.js';
@@ -38,6 +41,8 @@ const HOTSPOT_SCHEDULE_INTERVAL_HOURS = Math.max(
 const HOTSPOT_SCHEDULE_DESCRIPTION = HOTSPOT_SCHEDULE_INTERVAL_HOURS === 24
   ? '每天自动扫描一次'
   : `每 ${HOTSPOT_SCHEDULE_INTERVAL_HOURS} 小时自动扫描一次`;
+const DAILY_REPORT_SCHEDULE_CRON = process.env.DAILY_REPORT_CRON || '0 9 * * *';
+const DAILY_REPORT_SCHEDULE_DESCRIPTION = '每天 09:00 自动生成 BIM 日报';
 const FORCE_HTTPS = process.env.FORCE_HTTPS === 'true';
 
 function getAppVersion(): string {
@@ -92,6 +97,7 @@ app.use('/api/auth', authRouter);
 app.use('/api', requireAuth);
 app.use('/api/keywords', keywordsRouter);
 app.use('/api/hotspots', hotspotsRouter);
+app.use('/api/daily', dailyRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/notifications', notificationsRouter);
 
@@ -124,7 +130,12 @@ app.get('/api/health', async (req, res) => {
       intervalHours: HOTSPOT_SCHEDULE_INTERVAL_HOURS,
       description: HOTSPOT_SCHEDULE_DESCRIPTION
     },
+    dailyReportScheduler: {
+      cron: DAILY_REPORT_SCHEDULE_CRON,
+      description: DAILY_REPORT_SCHEDULE_DESCRIPTION
+    },
     hotspotCheckQueue: getHotspotCheckQueueState(),
+    dailyReportQueue: getDailyReportQueueState(),
     detailEnrichmentQueue: getDetailEnrichmentQueueState(),
     timestamp: new Date().toISOString()
   });
@@ -190,6 +201,16 @@ cron.schedule(HOTSPOT_SCHEDULE_CRON, async () => {
   }
 });
 
+cron.schedule(DAILY_REPORT_SCHEDULE_CRON, async () => {
+  console.log('📰 Running scheduled BIM daily report...');
+  try {
+    const result = startDailyReportInBackground('scheduled');
+    console.log(result.accepted ? '✅ Scheduled BIM daily report queued' : `⏭ ${result.message}`);
+  } catch (error) {
+    console.error('❌ Scheduled BIM daily report failed:', error);
+  }
+});
+
 // Export for use in other modules
 export { io };
 
@@ -199,6 +220,7 @@ httpServer.listen(PORT, async () => {
   try {
     await ensureDefaultSettings();
     await ensureDefaultKeywords();
+    await ensureDefaultDailyReportData();
     if (hasEnabledProxyPool()) {
       await refreshProxyPoolHealth(true).catch((error) => {
         console.warn('Failed to initialize proxy pool health:', error instanceof Error ? error.message : error);
@@ -219,6 +241,7 @@ httpServer.listen(PORT, async () => {
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check schedule: ${HOTSPOT_SCHEDULE_DESCRIPTION}
+  📰 BIM daily report schedule: ${DAILY_REPORT_SCHEDULE_DESCRIPTION}
   🖥 Frontend ${hasClientBuild ? `served from ${clientDistPath}` : 'not built yet'}
   `);
 });

@@ -156,3 +156,104 @@ model SourceProbe {
   @@index([runId])
   @@index([sourceId, createdAt])
 }
+
+model DailySource {
+  id         String         @id
+  name       String
+  homepage   String
+  listUrl    String
+  sourceType String
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  articles   DailyArticle[]
+}
+
+model DailyKeyword {
+  id          String                 @id @default(uuid())
+  label       String                 @unique
+  slug        String                 @unique
+  aliasesJson String?
+  category    String?
+  sortOrder   Int                    @default(0)
+  isActive    Boolean                @default(true)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  hits        DailyArticleKeywordHit[]
+}
+
+model DailyReport {
+  id               String         @id @default(uuid())
+  reportDate       DateTime       @unique
+  title            String
+  intro            String
+  executiveSummary String
+  sectionsJson     String
+  status           String         @default("completed")
+  sourceCount      Int            @default(0)
+  articleCount     Int            @default(0)
+  keywordStatsJson String
+  generatedAt      DateTime       @default(now())
+  createdAt        DateTime       @default(now())
+  articles         DailyArticle[]
+  runs             DailyRun[]
+}
+
+model DailyArticle {
+  id                String                 @id @default(uuid())
+  sourceId          String
+  reportId          String
+  reportDate        DateTime
+  title             String
+  excerpt           String?
+  summary           String?
+  url               String
+  publishedAt       DateTime?
+  category          String?
+  fetchStatus       String                 @default("fetched")
+  contentHash       String
+  keywordHitPreview String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  source            DailySource            @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  report            DailyReport            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  keywordHits       DailyArticleKeywordHit[]
+
+  @@unique([sourceId, url, reportDate])
+  @@index([reportDate])
+  @@index([sourceId, reportDate])
+  @@index([reportId])
+}
+
+model DailyArticleKeywordHit {
+  id           String       @id @default(uuid())
+  articleId    String
+  keywordId    String
+  matchedText  String
+  matchCount   Int          @default(1)
+  hitFieldsJson String
+  createdAt    DateTime     @default(now())
+  article      DailyArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  keyword      DailyKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, keywordId])
+  @@index([keywordId, createdAt])
+  @@index([articleId])
+}
+
+model DailyRun {
+  id                String       @id @default(uuid())
+  triggerType       String
+  status            String       @default("running")
+  sourceCount       Int          @default(0)
+  articleCount      Int          @default(0)
+  reportId          String?
+  sourceSummaryJson String?
+  errorMessage      String?
+  startedAt         DateTime     @default(now())
+  completedAt       DateTime?
+  report            DailyReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([startedAt])
+  @@index([status])
+}

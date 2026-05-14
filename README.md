@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.6.19`（正式域名切换到 HTTPS 会话模式）
+- `v1.7.0`（新增独立 `BIM 日报` 模块）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -30,14 +30,15 @@
 
 推荐做法：
 
-- 把真实会话文件放到 `/Users/Weishengsu/dev/yupi-hot-monitor/.secrets/ceb-session.json`
-- 参考模板：[docs/ceb-session.example.json](/Users/Weishengsu/dev/yupi-hot-monitor/docs/ceb-session.example.json)
+- 把真实会话文件放到 `/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/.secrets/ceb-session.json`
+- 参考模板：[docs/ceb-session.example.json](/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/docs/ceb-session.example.json)
 - 然后告诉我这个路径，或者让我直接按默认路径读取
 
 ## 核心能力
 
 - 聚焦 BIM 招采来源：深圳、广东、广州及全国级公开招采平台，当前默认包含 `szggzy`、`szygcgpt`、`guangdong`、`gzebpubservice`、`ccgp`、`ggzyNational`、`cebpubservice`
 - 列表抓取、详情增强、AI 识别、结构化字段提取、入库展示全链路闭环
+- 新增独立 `BIM 日报` 模块：每天自动汇总 BIM 行业资讯、政策、案例、软件与标准动态
 - 投标机会清单与项目详情页分层展示
 - 招采结构化筛选：地区、预算、截止时间、平台、BIM 类型
 - Firecrawl 详情增强与二段深度解析队列
@@ -54,6 +55,21 @@
 - 中国政府采购网 `ccgp`
 - 全国公共资源交易平台 `ggzyNational`
 - 中国招标投标公共服务平台 `cebpubservice`
+
+## BIM 日报首批信源
+
+- `ChinaBIM`
+- `BIM建筑网`
+- `BIMBOX`
+- `上海 BIM 推广中心`
+- `Fuzor 官网`
+- `buildingSMART`
+
+日报模块与招采机会池完全隔离：
+
+- 不写入 `Hotspot / Keyword / CrawlRun / AiAnalysisLog / Notification`
+- 使用独立数据表存放日报来源、日报文章、关键词命中和日报生成记录
+- 默认每天 `09:00` 自动生成一篇 BIM 行业日报
 
 ## 项目结构
 
@@ -88,7 +104,7 @@ npx prisma db push
 
 ### 环境变量
 
-复制并编辑 `/Users/Weishengsu/dev/yupi-hot-monitor/server/.env.example`：
+复制并编辑 `/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/server/.env.example`：
 
 ```bash
 cp server/.env.example server/.env
@@ -100,6 +116,11 @@ cp server/.env.example server/.env
 PORT=3001
 HOTSPOT_CHECK_CRON=0 0 * * *
 HOTSPOT_CHECK_INTERVAL_HOURS=24
+DAILY_REPORT_CRON=0 9 * * *
+DAILY_REPORT_LOOKBACK_HOURS=24
+DAILY_REPORT_FALLBACK_LOOKBACK_HOURS=48
+DAILY_REPORT_ARTICLES_PER_SOURCE=6
+DAILY_REPORT_AI_CONCURRENCY=2
 AUTH_USERNAME=admin
 AUTH_PASSWORD=88888888
 AUTH_SESSION_SECRET=change_this_before_public_release
@@ -133,6 +154,7 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
 - `HOTSPOT_CHECK_*`：默认每天 `00:00` 扫描一次，降低高频探测导致的 WAF 风险。
+- `DAILY_REPORT_*`：独立控制 `BIM 日报` 的生成时间、回看窗口与单源收录上限；默认每天 `09:00` 生成一篇日报。
 - `AUTH_*`：访问保护配置。默认账号密码是 `admin / 88888888`，正式对外前建议至少修改密码和 `AUTH_SESSION_SECRET`。
 - `AUTH_COOKIE_SECURE=true`：正式域名走 HTTPS 时建议开启，这样登录 Cookie 不会在明文 HTTP 里传输。
 - `FORCE_HTTPS=true`：建议正式域名环境开启；用户即使误输入 `http://`，也会自动跳到 `https://`。
@@ -141,10 +163,10 @@ FEISHU_BITABLE_TABLE_ID=
 ### 本地开发
 
 ```bash
-cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/server
 npm run dev
 
-cd /Users/Weishengsu/dev/yupi-hot-monitor/client
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/client
 npm run dev
 ```
 
@@ -156,7 +178,7 @@ npm run dev
 ### v1.2 单应用运行
 
 ```bash
-cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/server
 npm run build:app
 npm run start
 ```
@@ -171,7 +193,7 @@ npm run start
 推荐统一使用仓库自带脚本，避免把本地 SQLite 数据库、`.env`、`.secrets`、构建产物误同步到生产机：
 
 ```bash
-cd /Users/Weishengsu/dev/yupi-hot-monitor
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor
 ./scripts/deploy_production.sh
 ```
 
@@ -208,7 +230,7 @@ DEPLOY_RUN_USER=admin
 ## 常用命令
 
 ```bash
-cd /Users/Weishengsu/dev/yupi-hot-monitor/server
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/server
 npm run build
 npm run build:app
 npm run start
@@ -216,7 +238,7 @@ npm run sync:feishu -- --limit=40
 ```
 
 ```bash
-cd /Users/Weishengsu/dev/yupi-hot-monitor/client
+cd /Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/client
 npm run build
 ```
 
@@ -259,11 +281,11 @@ npm run build
 
 ## 文档
 
-- 开发文档：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/DEVELOPMENT.md`
-- 需求文档：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/REQUIREMENTS.md`
-- 上下文交接：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/CONTEXT_HANDOFF.md`
-- 本地运行：`/Users/Weishengsu/dev/yupi-hot-monitor/docs/LOCAL_SETUP.md`
-- 版本记录：`/Users/Weishengsu/dev/yupi-hot-monitor/CHANGELOG.md`
+- 开发文档：`/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/docs/DEVELOPMENT.md`
+- 需求文档：`/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/docs/REQUIREMENTS.md`
+- 上下文交接：`/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/docs/CONTEXT_HANDOFF.md`
+- 本地运行：`/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/docs/LOCAL_SETUP.md`
+- 版本记录：`/Users/Weishengsu/dev/Bim_tender/yupi-hot-monitor/CHANGELOG.md`
 
 ## 部署建议
 
