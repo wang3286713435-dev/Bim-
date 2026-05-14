@@ -6,6 +6,11 @@ export type DailySourceDefinition = {
   homepage: string;
   listUrl: string;
   sourceType: 'portal' | 'official' | 'software' | 'standards';
+  recall?: {
+    queries: string[];
+    maxPerQuery: number;
+    watchHorizonDays: number;
+  };
 };
 
 export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
@@ -15,6 +20,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://www.chinabim.com/',
     listUrl: 'https://www.chinabim.com/news',
     sourceType: 'portal',
+    recall: {
+      queries: ['BIM', '数字孪生'],
+      maxPerQuery: 2,
+      watchHorizonDays: 30,
+    }
   },
   {
     id: 'bimii',
@@ -22,6 +32,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://bimii.com/',
     listUrl: 'https://bimii.com/wp-json/wp/v2/posts?per_page=12&_fields=link,title,date,excerpt,categories,tags',
     sourceType: 'portal',
+    recall: {
+      queries: ['BIM', '数字孪生'],
+      maxPerQuery: 3,
+      watchHorizonDays: 120,
+    }
   },
   {
     id: 'bimbox',
@@ -29,6 +44,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://bimbox.top/',
     listUrl: 'https://bimbox.top/topics/news',
     sourceType: 'portal',
+    recall: {
+      queries: ['BIM', '数字孪生'],
+      maxPerQuery: 3,
+      watchHorizonDays: 365,
+    }
   },
   {
     id: 'shbimcenter',
@@ -36,6 +56,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://www.shbimcenter.org/',
     listUrl: 'https://www.shbimcenter.org/zhengcezhinan/',
     sourceType: 'official',
+    recall: {
+      queries: ['BIM', 'CIM'],
+      maxPerQuery: 3,
+      watchHorizonDays: 365,
+    }
   },
   {
     id: 'fuzor',
@@ -43,6 +68,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://www.bim4d.com.cn/',
     listUrl: 'https://www.bim4d.com.cn/support.html',
     sourceType: 'software',
+    recall: {
+      queries: ['Revit', '施工模拟'],
+      maxPerQuery: 2,
+      watchHorizonDays: 180,
+    }
   },
   {
     id: 'buildingsmart',
@@ -50,6 +80,11 @@ export const DAILY_SOURCE_DEFINITIONS: DailySourceDefinition[] = [
     homepage: 'https://www.buildingsmart.org/',
     listUrl: 'https://www.buildingsmart.org/wp-json/wp/v2/posts?per_page=12&_fields=link,title,date,excerpt,categories,tags',
     sourceType: 'standards',
+    recall: {
+      queries: ['OpenBIM', 'IFC'],
+      maxPerQuery: 3,
+      watchHorizonDays: 60,
+    }
   },
 ];
 

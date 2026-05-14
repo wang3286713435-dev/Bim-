@@ -2,14 +2,16 @@ import { prisma } from '../db.js';
 import { generateStructuredJson } from './llmProvider.js';
 import { buildKeywordHitPreview, matchDailyKeywords, type DailyKeywordHit } from './dailyKeywordMatcher.js';
 import {
+  applyEditorialSelection,
   buildDailyReportDraft,
   selectEditorialDailyArticles,
+  type DailyEditorialReview,
   type DailyArticleDraft,
   type DailyRecencyBucket,
   type DailyReportDraft,
   type DailySectionTitle
 } from './dailyReportBuilder.js';
-import { type DailySourceId } from './dailyReportRegistry.js';
+import { DAILY_SOURCE_DEFINITIONS, type DailySourceId } from './dailyReportRegistry.js';
 import {
   fetchDailyArticleDetailText,
   fetchDailySourceArticles,
@@ -62,6 +64,8 @@ type StoredDailyMeta = {
   freshArticleCount: number;
   supplementalArticleCount: number;
   sourceCount: number;
+  editorialAngle?: string;
+  recommendedActions?: string[];
 };
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
@@ -194,11 +198,13 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
       title: string;
       intro: string;
       executiveSummary: string;
+      highlights?: string[];
+      recommendedActions?: string[];
       sectionSummaries: Array<{ title: DailySectionTitle; summary: string }>;
     }>([
       {
         role: 'system',
-        content: '你是 BIM 行业日报主编。请根据输入资讯，为管理层生成可直接阅读的 BIM 日报成品。输出更正式的日报标题、导语、执行摘要、3-5 条今日重点，以及分区小结。只输出 JSON。'
+        content: '你是 BIM 行业日报主编。请根据输入资讯，为管理层生成可直接阅读的 BIM 日报成品。输出更正式的日报标题、导语、执行摘要、3-5 条今日重点、2-3 条建议跟踪动作，以及分区小结。只输出 JSON。'
       },
       {
         role: 'user',
@@ -216,7 +222,8 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
             }))
           })),
           keywordStats: draft.keywordStats,
-          meta: draft.meta
+          meta: draft.meta,
+          recommendedActions: draft.recommendedActions
         }, null, 2)
       }
     ], {
@@ -230,9 +237,12 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
       title: normalizeText(result.title || draft.title) || draft.title,
       intro: normalizeText(result.intro || draft.intro) || draft.intro,
       executiveSummary: normalizeText(result.executiveSummary || draft.executiveSummary) || draft.executiveSummary,
-      highlights: Array.isArray((result as { highlights?: string[] }).highlights)
-        ? (result as { highlights?: string[] }).highlights!.map((item) => normalizeText(item)).filter(Boolean).slice(0, 5)
+      highlights: Array.isArray(result.highlights)
+        ? result.highlights.map((item) => normalizeText(item)).filter(Boolean).slice(0, 5)
         : draft.highlights,
+      recommendedActions: Array.isArray(result.recommendedActions)
+        ? result.recommendedActions.map((item) => normalizeText(item)).filter(Boolean).slice(0, 3)
+        : draft.recommendedActions,
       sections: draft.sections.map((section) => ({
         ...section,
         summary: sectionSummaryMap.get(section.title) || section.summary
@@ -240,6 +250,48 @@ async function enhanceReportDraftWithAI(draft: DailyReportDraft): Promise<DailyR
     };
   } catch {
     return draft;
+  }
+}
+
+async function reviewDailyCandidateSetWithAI(
+  candidates: Array<DailyArticleDraft & { keywordHitPreview: string | null }>,
+  limit: number
+): Promise<DailyEditorialReview | null> {
+  if (candidates.length === 0) return null;
+
+  try {
+    const result = await generateStructuredJson<DailyEditorialReview>([
+      {
+        role: 'system',
+        content: '你是 BIM 行业日报的总编辑。请审阅全部候选资讯，优先挑选最值得管理层阅读的内容。优先级：政策与标准 > 行业趋势 > 代表性案例 > 软件工具 > 国际标准。避免重复角度，兼顾来源多样性与时效。只输出 JSON：{"selectedUrls":[],"editorialAngle":"","recommendedActions":[]}'
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(candidates.map((item) => ({
+          url: item.url,
+          sourceName: item.sourceName,
+          title: item.title,
+          summary: item.summary,
+          excerpt: item.excerpt,
+          recencyBucket: item.recencyBucket,
+          keywordHitPreview: item.keywordHitPreview,
+          matchedKeywords: item.matchedKeywords.map((hit) => hit.label)
+        })), null, 2)
+      }
+    ], {
+      maxTokens: 900,
+      temperature: 0.2
+    });
+
+    return {
+      selectedUrls: Array.isArray(result.selectedUrls) ? result.selectedUrls.filter(Boolean).slice(0, limit) : [],
+      editorialAngle: normalizeText(result.editorialAngle || ''),
+      recommendedActions: Array.isArray(result.recommendedActions)
+        ? result.recommendedActions.map((item) => normalizeText(item)).filter(Boolean).slice(0, 3)
+        : []
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -278,17 +330,23 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
     errorMessage: result.errorMessage
   }));
 
-  const pickedRows = sourceResults.flatMap((result) =>
-    pickDailySourceWindow(
+  const pickedRows = sourceResults.flatMap((result) => {
+    const sourceDefinition = DAILY_SOURCE_DEFINITIONS.find((item) => item.id === result.sourceId);
+    const watchHorizonHours = Math.max(
+      DAILY_REPORT_EXTENDED_LOOKBACK_HOURS,
+      (sourceDefinition?.recall?.watchHorizonDays || 0) * 24
+    );
+
+    return pickDailySourceWindow(
       filterToUsableDailyArticles(result.rows),
       DAILY_REPORT_LOOKBACK_HOURS,
       DAILY_REPORT_FALLBACK_LOOKBACK_HOURS,
       DAILY_REPORT_ARTICLES_PER_SOURCE,
       new Date(),
-      DAILY_REPORT_EXTENDED_LOOKBACK_HOURS,
+      watchHorizonHours,
       DAILY_REPORT_MIN_ARTICLES_PER_SOURCE
-    )
-  );
+    );
+  });
 
   const enrichedCandidates = await mapWithConcurrency(pickedRows, DAILY_REPORT_DETAIL_CONCURRENCY, async (article) => ({
     ...article,
@@ -296,8 +354,9 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
   }));
 
   const candidateDrafts = await buildDailyArticleDrafts(enrichedCandidates);
-  const selectedDrafts = selectEditorialDailyArticles(candidateDrafts, DAILY_REPORT_FINAL_ARTICLE_LIMIT);
-  const baseDraft = buildDailyReportDraft(reportDate, selectedDrafts, candidateDrafts.length);
+  const editorialReview = await reviewDailyCandidateSetWithAI(candidateDrafts, DAILY_REPORT_FINAL_ARTICLE_LIMIT);
+  const selectedDrafts = applyEditorialSelection(candidateDrafts, editorialReview, DAILY_REPORT_FINAL_ARTICLE_LIMIT);
+  const baseDraft = buildDailyReportDraft(reportDate, selectedDrafts, candidateDrafts.length, editorialReview);
   const finalDraft = await enhanceReportDraftWithAI(baseDraft);
   const sectionsWithPreview: StoredDailySection[] = finalDraft.sections.map((section) => ({
     title: section.title,
@@ -320,7 +379,10 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
               executiveSummary: finalDraft.executiveSummary,
               highlightsJson: JSON.stringify(finalDraft.highlights),
               sectionsJson: JSON.stringify(sectionsWithPreview),
-              metaJson: JSON.stringify(finalDraft.meta),
+              metaJson: JSON.stringify({
+                ...finalDraft.meta,
+                recommendedActions: finalDraft.recommendedActions
+              }),
               status: 'completed',
               sourceCount: finalDraft.sourceCount,
               articleCount: finalDraft.articleCount,
@@ -336,7 +398,10 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
               executiveSummary: finalDraft.executiveSummary,
               highlightsJson: JSON.stringify(finalDraft.highlights),
               sectionsJson: JSON.stringify(sectionsWithPreview),
-              metaJson: JSON.stringify(finalDraft.meta),
+              metaJson: JSON.stringify({
+                ...finalDraft.meta,
+                recommendedActions: finalDraft.recommendedActions
+              }),
               status: 'completed',
               sourceCount: finalDraft.sourceCount,
               articleCount: finalDraft.articleCount,
@@ -492,6 +557,14 @@ export function serializeDailyReportShape(report: {
       supplementalArticleCount: 0,
       sourceCount: report.sourceCount,
     }),
+    recommendedActions: safeJsonParse<StoredDailyMeta>(report.metaJson, {
+      candidateArticleCount: report.articleCount,
+      selectedArticleCount: report.articleCount,
+      freshArticleCount: report.articleCount,
+      supplementalArticleCount: 0,
+      sourceCount: report.sourceCount,
+      recommendedActions: []
+    }).recommendedActions || [],
     status: report.status,
     sourceCount: report.sourceCount,
     articleCount: report.articleCount,

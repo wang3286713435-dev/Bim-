@@ -9,6 +9,7 @@ import {
   parseChinaBimListResponse,
   parseFuzorSupportHtml,
   parseShbimCenterListHtml,
+  parseWordPressApiResponsePayload,
   parseWordPressPosts,
   type ParsedDailySourceRow
 } from './dailySourceParsers.js';
@@ -17,6 +18,8 @@ export type DailySourceArticle = ParsedDailySourceRow & {
   sourceId: DailySourceId;
   sourceName: string;
   contentHash: string;
+  targetedRecall?: boolean;
+  recallQueries?: string[];
 };
 
 export type DailySourceArticleWithBucket = DailySourceArticle & {
@@ -51,7 +54,12 @@ function buildContentHash(sourceId: DailySourceId, row: ParsedDailySourceRow): s
     .digest('hex');
 }
 
-function dedupeRows(sourceId: DailySourceId, sourceName: string, rows: ParsedDailySourceRow[]): DailySourceArticle[] {
+function materializeRows(
+  sourceId: DailySourceId,
+  sourceName: string,
+  rows: ParsedDailySourceRow[],
+  extras?: Partial<Pick<DailySourceArticle, 'targetedRecall' | 'recallQueries'>>
+): DailySourceArticle[] {
   const seen = new Set<string>();
   return rows
     .map((row) => ({
@@ -60,7 +68,9 @@ function dedupeRows(sourceId: DailySourceId, sourceName: string, rows: ParsedDai
       sourceName,
       excerpt: trimText(row.excerpt || ''),
       title: trimText(row.title),
-      contentHash: buildContentHash(sourceId, row)
+      contentHash: buildContentHash(sourceId, row),
+      targetedRecall: extras?.targetedRecall,
+      recallQueries: extras?.recallQueries?.length ? [...new Set(extras.recallQueries)] : undefined
     }))
     .filter((row) => {
       const key = `${row.url}|${row.title}`;
@@ -70,9 +80,40 @@ function dedupeRows(sourceId: DailySourceId, sourceName: string, rows: ParsedDai
     });
 }
 
+function dedupeRows(sourceId: DailySourceId, sourceName: string, rows: ParsedDailySourceRow[]): DailySourceArticle[] {
+  return materializeRows(sourceId, sourceName, rows);
+}
+
+export function mergeDailySourceArticles(baseRows: DailySourceArticle[], recallRows: DailySourceArticle[]): DailySourceArticle[] {
+  const merged = new Map<string, DailySourceArticle>();
+
+  for (const row of [...baseRows, ...recallRows]) {
+    const key = `${row.url}|${row.title}`;
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, {
+        ...row,
+        recallQueries: row.recallQueries?.length ? [...new Set(row.recallQueries)] : undefined
+      });
+      continue;
+    }
+
+    merged.set(key, {
+      ...current,
+      excerpt: row.excerpt.length > current.excerpt.length ? row.excerpt : current.excerpt,
+      publishedAt: current.publishedAt || row.publishedAt,
+      targetedRecall: current.targetedRecall || row.targetedRecall,
+      recallQueries: [...new Set([...(current.recallQueries || []), ...(row.recallQueries || [])])]
+    });
+  }
+
+  return [...merged.values()];
+}
+
 async function fetchWordPressSource(sourceId: DailySourceId, listUrl: string, sourceName: string): Promise<DailySourceArticle[]> {
   const response = await axios.get(listUrl, { headers: REQUEST_HEADERS, timeout: 20000 });
-  return dedupeRows(sourceId, sourceName, parseWordPressPosts(response.data));
+  const posts = Array.isArray(response.data) ? response.data : parseWordPressApiResponsePayload(response.data);
+  return dedupeRows(sourceId, sourceName, parseWordPressPosts(posts));
 }
 
 async function fetchBimboxSource(sourceName: string): Promise<DailySourceArticle[]> {
@@ -147,6 +188,78 @@ async function fetchChinaBimSource(sourceName: string): Promise<DailySourceArtic
   ));
   const rows = listResponses.flatMap((response) => parseChinaBimListResponse(response.data, baseUrl));
   return dedupeRows('chinabim', sourceName, rows);
+}
+
+function buildWordPressSearchUrl(listUrl: string, query: string, perPage: number): string {
+  const url = new URL(listUrl);
+  url.searchParams.set('search', query);
+  url.searchParams.set('per_page', String(perPage));
+  url.searchParams.set('_fields', 'link,title,date,excerpt,categories,tags');
+  return url.toString();
+}
+
+async function fetchWordPressRecallSource(
+  sourceId: DailySourceId,
+  listUrl: string,
+  sourceName: string,
+  queries: string[],
+  maxPerQuery: number
+): Promise<DailySourceArticle[]> {
+  const responses = await Promise.all(queries.map((query) =>
+    axios.get(buildWordPressSearchUrl(listUrl, query, maxPerQuery), { headers: REQUEST_HEADERS, timeout: 20000 })
+      .then((response) => {
+        const posts = Array.isArray(response.data) ? response.data : parseWordPressApiResponsePayload(response.data);
+        return materializeRows(sourceId, sourceName, parseWordPressPosts(posts), {
+          targetedRecall: true,
+          recallQueries: [query]
+        });
+      })
+      .catch(() => [] as DailySourceArticle[])
+  ));
+  return mergeDailySourceArticles([], responses.flat());
+}
+
+async function fetchBimboxRecallSource(sourceName: string, queries: string[], maxPerQuery: number): Promise<DailySourceArticle[]> {
+  const responses = await Promise.all(queries.map((query) =>
+    axios.get(`https://bimbox.top/?s=${encodeURIComponent(query)}`, { headers: REQUEST_HEADERS, timeout: 20000 })
+      .then((response) => materializeRows('bimbox', sourceName, parseBimboxTopicHtml(response.data).slice(0, maxPerQuery), {
+        targetedRecall: true,
+        recallQueries: [query]
+      }))
+      .catch(() => [] as DailySourceArticle[])
+  ));
+  return mergeDailySourceArticles([], responses.flat());
+}
+
+async function fetchShbimCenterRecallSource(sourceName: string, queries: string[], maxPerQuery: number): Promise<DailySourceArticle[]> {
+  const responses = await Promise.all(queries.map((query) =>
+    axios.get(`https://www.shbimcenter.org/search/index/init.html?modelid=0&q=${encodeURIComponent(query)}`, { headers: REQUEST_HEADERS, timeout: 20000 })
+      .then((response) => materializeRows('shbimcenter', sourceName, parseShbimCenterListHtml(response.data, 'https://www.shbimcenter.org/search/index/init.html').slice(0, maxPerQuery), {
+        targetedRecall: true,
+        recallQueries: [query]
+      }))
+      .catch(() => [] as DailySourceArticle[])
+  ));
+  return mergeDailySourceArticles([], responses.flat());
+}
+
+async function fetchDailySourceRecallArticles(definition: (typeof DAILY_SOURCE_DEFINITIONS)[number]): Promise<DailySourceArticle[]> {
+  const recall = definition.recall;
+  if (!recall?.queries.length) return [];
+
+  if (definition.id === 'bimii' || definition.id === 'buildingsmart') {
+    return fetchWordPressRecallSource(definition.id, definition.listUrl, definition.name, recall.queries, recall.maxPerQuery);
+  }
+
+  if (definition.id === 'bimbox') {
+    return fetchBimboxRecallSource(definition.name, recall.queries, recall.maxPerQuery);
+  }
+
+  if (definition.id === 'shbimcenter') {
+    return fetchShbimCenterRecallSource(definition.name, recall.queries, recall.maxPerQuery);
+  }
+
+  return [];
 }
 
 function chooseLongestText($: cheerio.CheerioAPI, selectors: string[]): string {
@@ -224,7 +337,7 @@ export async function fetchDailySourceArticles(sourceId: DailySourceId): Promise
   const startedAt = Date.now();
 
   try {
-    const rows = sourceId === 'bimii' || sourceId === 'buildingsmart'
+    const baseRows = sourceId === 'bimii' || sourceId === 'buildingsmart'
       ? await fetchWordPressSource(sourceId, definition.listUrl, definition.name)
       : sourceId === 'bimbox'
         ? await fetchBimboxSource(definition.name)
@@ -233,6 +346,8 @@ export async function fetchDailySourceArticles(sourceId: DailySourceId): Promise
           : sourceId === 'fuzor'
             ? await fetchFuzorSource(definition.name)
             : await fetchChinaBimSource(definition.name);
+    const recallRows = await fetchDailySourceRecallArticles(definition);
+    const rows = mergeDailySourceArticles(baseRows, recallRows);
 
     return {
       sourceId,
@@ -268,7 +383,11 @@ export function pickDailySourceWindow(
       recencyBucket: getDailyRecencyBucket(item.publishedAt, referenceDate, primaryHours, fallbackHours, extendedHours)
     }))
     .filter((item): item is DailySourceArticleWithBucket => item.recencyBucket !== 'stale')
-    .sort((a, b) => (b.publishedAt?.getTime() || 0) - (a.publishedAt?.getTime() || 0));
+    .sort((a, b) => {
+      const targetedDelta = Number(Boolean(b.targetedRecall)) - Number(Boolean(a.targetedRecall));
+      if (targetedDelta !== 0) return targetedDelta;
+      return (b.publishedAt?.getTime() || 0) - (a.publishedAt?.getTime() || 0);
+    });
 
   const today = sorted.filter((item) => item.recencyBucket === 'today');
   const recent = sorted.filter((item) => item.recencyBucket === 'recent');

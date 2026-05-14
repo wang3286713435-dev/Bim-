@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyEditorialSelection,
   buildManagementHighlights,
   buildDailyKeywordStats,
   buildDailyReportDraft,
@@ -111,5 +112,21 @@ describe('editorial selection helpers', () => {
     const highlights = buildManagementHighlights(ARTICLES);
     expect(highlights).toHaveLength(3);
     expect(highlights[0]).toContain('政策面');
+  });
+
+  it('honors AI editorial ordering and fills remaining slots with heuristic picks', () => {
+    const selected = applyEditorialSelection(
+      ARTICLES,
+      {
+        selectedUrls: [ARTICLES[2].url, ARTICLES[0].url],
+        editorialAngle: '优先强调政策与国际标准，再补应用案例',
+        recommendedActions: ['关注政策落地', '跟踪标准互操作']
+      },
+      3
+    );
+
+    expect(selected).toHaveLength(3);
+    expect(selected[0]?.url).toBe(ARTICLES[2].url);
+    expect(selected[1]?.url).toBe(ARTICLES[0].url);
   });
 });

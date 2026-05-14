@@ -161,6 +161,7 @@ export interface DailyReport {
   intro: string;
   executiveSummary: string;
   highlights: string[];
+  recommendedActions: string[];
   sections: DailyReportSection[];
   meta: {
     candidateArticleCount: number;
@@ -168,6 +169,7 @@ export interface DailyReport {
     freshArticleCount: number;
     supplementalArticleCount: number;
     sourceCount: number;
+    editorialAngle?: string;
   };
   status: string;
   sourceCount: number;

@@ -150,12 +150,34 @@ export function parseChinaBimListResponse(payload: ChinaBimListResponse, baseUrl
   return rows.filter((item): item is ParsedDailySourceRow => Boolean(item));
 }
 
-type WordPressPost = {
+export type WordPressPost = {
   date?: string;
   link?: string;
   title?: { rendered?: string };
   excerpt?: { rendered?: string };
 };
+
+export function parseWordPressApiResponsePayload(payload: unknown): WordPressPost[] {
+  if (Array.isArray(payload)) {
+    return payload as WordPressPost[];
+  }
+
+  if (typeof payload !== 'string') {
+    return [];
+  }
+
+  const arrayStart = payload.indexOf('[');
+  if (arrayStart < 0) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(payload.slice(arrayStart));
+    return Array.isArray(parsed) ? parsed as WordPressPost[] : [];
+  } catch {
+    return [];
+  }
+}
 
 export function parseWordPressPosts(posts: WordPressPost[]): ParsedDailySourceRow[] {
   const rows: Array<ParsedDailySourceRow | null> = posts

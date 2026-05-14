@@ -74,7 +74,7 @@ function getRecencyMeta(bucket: 'today' | 'recent' | 'watch' | undefined, isLigh
     };
   }
   return {
-    label: '近 7 日延续关注',
+    label: '延续关注',
     tone: isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.05] text-slate-200'
   };
 }
@@ -288,6 +288,28 @@ export default function DailyReportTab({
                     </p>
                   </div>
                 ))}
+              </div>
+            ) : null}
+
+            {selectedReport?.recommendedActions?.length ? (
+              <div className="mt-5 rounded-2xl border p-4 lg:p-5">
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">建议跟踪</div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                  {selectedReport.recommendedActions.map((item, index) => (
+                    <div
+                      key={`${item}-${index}`}
+                      className={cn(
+                        'rounded-2xl border p-4',
+                        isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
+                      )}
+                    >
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">跟踪动作 {index + 1}</div>
+                      <p className="mt-2 text-sm leading-6">
+                        {renderHighlightedByTerms(item, selectedTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>

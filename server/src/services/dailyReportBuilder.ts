@@ -42,6 +42,7 @@ export type DailyReportDraft = {
   intro: string;
   executiveSummary: string;
   highlights: string[];
+  recommendedActions: string[];
   sections: DailyReportSection[];
   sourceCount: number;
   articleCount: number;
@@ -52,7 +53,14 @@ export type DailyReportDraft = {
     freshArticleCount: number;
     supplementalArticleCount: number;
     sourceCount: number;
+    editorialAngle?: string;
   };
+};
+
+export type DailyEditorialReview = {
+  selectedUrls: string[];
+  editorialAngle: string;
+  recommendedActions: string[];
 };
 
 const SECTION_ORDER: DailySectionTitle[] = [
@@ -256,10 +264,60 @@ export function buildManagementHighlights(articles: DailyArticleDraft[]): string
   });
 }
 
+export function buildRecommendedActions(articles: DailyArticleDraft[]): string[] {
+  const sections = new Set(articles.map((item) => classifyDailyArticleSection(item)));
+  const actions: string[] = [];
+
+  if (sections.has('政策与标准')) {
+    actions.push('跟踪新规、导则或行业标准是否会影响今年的 BIM 工作流与交付口径。');
+  }
+  if (sections.has('案例与应用') || sections.has('行业观点与趋势')) {
+    actions.push('把代表性案例与趋势观点整理进内部知识库，提炼可复用的方法论与业务信号。');
+  }
+  if (sections.has('软件与产品动态') || sections.has('国际标准 / openBIM')) {
+    actions.push('评估关键工具与标准变化是否需要同步更新团队培训、模板和技术栈。');
+  }
+
+  return actions.slice(0, 3);
+}
+
+export function applyEditorialSelection(
+  articles: DailyArticleDraft[],
+  review: DailyEditorialReview | null,
+  limit = 8
+): DailyArticleDraft[] {
+  const fallback = selectEditorialDailyArticles(articles, limit);
+  if (!review?.selectedUrls?.length) {
+    return fallback;
+  }
+
+  const byUrl = new Map(articles.map((item) => [item.url, item]));
+  const selected: DailyArticleDraft[] = [];
+  const seen = new Set<string>();
+
+  for (const url of review.selectedUrls) {
+    const article = byUrl.get(url);
+    if (!article || seen.has(url)) continue;
+    selected.push(article);
+    seen.add(url);
+    if (selected.length >= limit) return selected;
+  }
+
+  for (const article of fallback) {
+    if (selected.length >= limit) break;
+    if (seen.has(article.url)) continue;
+    selected.push(article);
+    seen.add(article.url);
+  }
+
+  return selected;
+}
+
 export function buildDailyReportDraft(
   reportDate: Date,
   selectedArticles: DailyArticleDraft[],
-  candidateArticleCount = selectedArticles.length
+  candidateArticleCount = selectedArticles.length,
+  review?: DailyEditorialReview | null
 ): DailyReportDraft {
   const keywordStats = buildDailyKeywordStats(selectedArticles);
   const sectionsMap = new Map<DailySectionTitle, DailyArticleDraft[]>();
@@ -289,9 +347,10 @@ export function buildDailyReportDraft(
 
   return {
     title: `${dateLabel} BIM 行业日报`,
-    intro: `今日从 ${sourceCount} 个来源审阅 ${candidateArticleCount} 条 BIM 相关候选资讯，精选 ${selectedArticles.length} 条进入日报。${supplementalArticleCount > 0 ? `其中 ${supplementalArticleCount} 条为近 7 日延续关注。` : ''}`,
-    executiveSummary: `今日重点围绕政策动向、行业趋势与项目应用展开。关键词概览：${topKeywords}。${freshArticleCount > 0 ? `今日新增 ${freshArticleCount} 条。` : '今日新增较少，已自动补入近 7 日延续关注内容。'}`,
+    intro: `今日从 ${sourceCount} 个来源审阅 ${candidateArticleCount} 条 BIM 相关候选资讯，精选 ${selectedArticles.length} 条进入日报。${supplementalArticleCount > 0 ? `其中 ${supplementalArticleCount} 条为延续关注内容。` : ''}`,
+    executiveSummary: `今日重点围绕政策动向、行业趋势与项目应用展开。关键词概览：${topKeywords}。${freshArticleCount > 0 ? `今日新增 ${freshArticleCount} 条。` : '今日新增较少，已自动补入延续关注内容。'}`,
     highlights,
+    recommendedActions: review?.recommendedActions?.length ? review.recommendedActions.slice(0, 3) : buildRecommendedActions(selectedArticles),
     sections,
     sourceCount,
     articleCount: selectedArticles.length,
@@ -302,6 +361,7 @@ export function buildDailyReportDraft(
       freshArticleCount,
       supplementalArticleCount,
       sourceCount,
+      editorialAngle: review?.editorialAngle || undefined,
     },
   };
 }
