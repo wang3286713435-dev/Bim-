@@ -968,7 +968,42 @@ export async function updateDailyOverviewPreferences(input: Array<{
     });
   }
 
-  return getLatestDailyOverview();
+  const overview = await getLatestDailyOverview();
+  const latestReport = await prisma.dailyReport.findFirst({
+    orderBy: { reportDate: 'desc' }
+  });
+  if (overview && latestReport) {
+    await prisma.dailyOverviewSnapshot.upsert({
+      where: {
+        reportId: latestReport.id
+      },
+      update: {
+        scope: 'primary',
+        title: overview.title,
+        summary: overview.summary,
+        itemsJson: JSON.stringify({
+          title: overview.title,
+          summary: overview.summary,
+          items: overview.items
+        }),
+        generatedAt: new Date()
+      },
+      create: {
+        reportId: latestReport.id,
+        scope: 'primary',
+        title: overview.title,
+        summary: overview.summary,
+        itemsJson: JSON.stringify({
+          title: overview.title,
+          summary: overview.summary,
+          items: overview.items
+        }),
+        generatedAt: new Date()
+      }
+    });
+  }
+
+  return overview;
 }
 
 export async function getLatestDailyReportRecord() {
