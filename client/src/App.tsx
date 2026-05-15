@@ -3726,11 +3726,14 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
 
   const handleOpenDailyOverviewItem = useCallback((reportId: string) => {
     if (!reportId) return;
+    setSelectedDailySource('');
+    setSelectedDailyKeyword('');
+    setSelectedDailySearchText('');
     setSelectedDailyReportId(reportId);
-    window.setTimeout(() => {
+    void loadDailyData({ reportId }).then(() => window.setTimeout(() => {
       document.getElementById('daily-report-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 120);
-  }, []);
+    }, 80));
+  }, [loadDailyData]);
 
   const handleUpdateDailyOverviewPreferences = useCallback(async (items: Array<{ key: string; pinned?: boolean; manualOrder?: number | null }>) => {
     try {

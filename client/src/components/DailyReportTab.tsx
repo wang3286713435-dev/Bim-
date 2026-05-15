@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Reorder } from 'framer-motion';
 import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyOverviewSnapshot, DailyReport } from '../services/api';
@@ -187,24 +188,51 @@ export default function DailyReportTab({
   const sections = useMemo(() => filterSections(selectedReport, selectedSource, selectedKeyword, searchText), [selectedReport, selectedSource, selectedKeyword, searchText]);
   const sourceOptions = health?.sources || [];
   const [showAppendix, setShowAppendix] = useState(false);
-  const [draggedOverviewKey, setDraggedOverviewKey] = useState<string | null>(null);
   const overviewItems = useMemo(() => filterOverviewItems(overview, selectedKeyword, searchText), [overview, selectedKeyword, searchText]);
+  const [overviewOrder, setOverviewOrder] = useState<string[]>([]);
+  const overviewOrderRef = useRef<string[]>([]);
   const criticalOverviewItems = overviewItems.filter((item) => item.importance === 'critical' || item.status === 'persistent');
 
-  const handleDropOverviewItem = async (targetKey: string) => {
-    if (!draggedOverviewKey || draggedOverviewKey === targetKey) return;
-    const fromIndex = overviewItems.findIndex((item) => item.key === draggedOverviewKey);
-    const toIndex = overviewItems.findIndex((item) => item.key === targetKey);
-    if (fromIndex < 0 || toIndex < 0) return;
-    const reordered = [...overviewItems];
-    const [moved] = reordered.splice(fromIndex, 1);
-    reordered.splice(toIndex, 0, moved);
-    setDraggedOverviewKey(null);
-    await onUpdateOverviewPreferences(reordered.map((item, index) => ({
-      key: item.key,
+  useEffect(() => {
+    const nextKeys = overviewItems.map((item) => item.key);
+    const nextKeySet = new Set(nextKeys);
+    setOverviewOrder((current) => {
+      const retained = current.filter((key) => nextKeySet.has(key));
+      const appended = nextKeys.filter((key) => !retained.includes(key));
+      return [...retained, ...appended];
+    });
+  }, [overviewItems]);
+
+  useEffect(() => {
+    overviewOrderRef.current = overviewOrder;
+  }, [overviewOrder]);
+
+  const orderedOverviewItems = useMemo(() => {
+    const itemMap = new Map(overviewItems.map((item) => [item.key, item]));
+    const ordered = overviewOrder
+      .map((key) => itemMap.get(key))
+      .filter((item): item is DailyOverviewSnapshot['items'][number] => Boolean(item));
+    const orderedKeySet = new Set(ordered.map((item) => item.key));
+    return [
+      ...ordered,
+      ...overviewItems.filter((item) => !orderedKeySet.has(item.key))
+    ];
+  }, [overviewItems, overviewOrder]);
+  const overviewReorderValues = useMemo(() => orderedOverviewItems.map((item) => item.key), [orderedOverviewItems]);
+
+  const handleReorderOverview = useCallback((nextOrder: string[]) => {
+    overviewOrderRef.current = nextOrder;
+    setOverviewOrder(nextOrder);
+  }, []);
+
+  const persistOverviewOrder = useCallback(() => {
+    const order = overviewOrderRef.current;
+    if (order.length === 0) return;
+    void onUpdateOverviewPreferences(order.map((key, index) => ({
+      key,
       manualOrder: index
     })));
-  };
+  }, [onUpdateOverviewPreferences]);
 
   return (
     <div className="space-y-6">
@@ -243,79 +271,87 @@ export default function DailyReportTab({
         </div>
 
         <div className="mt-5 space-y-4">
-            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-              {overviewItems.map((item) => {
+            <Reorder.Group
+              axis="y"
+              values={overviewReorderValues}
+              onReorder={handleReorderOverview}
+              className="grid list-none gap-3 lg:grid-cols-2 xl:grid-cols-3"
+            >
+              {orderedOverviewItems.map((item) => {
                 const tone = getOverviewTone(item.importance, isLight);
                 return (
-                  <div
+                  <Reorder.Item
                     key={item.key}
-                    draggable
-                    onDragStart={() => setDraggedOverviewKey(item.key)}
-                    onDragEnd={() => setDraggedOverviewKey(null)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => void handleDropOverviewItem(item.key)}
+                    value={item.key}
+                    onDragEnd={persistOverviewOrder}
+                    whileDrag={{
+                      scale: 1.015,
+                      zIndex: 30,
+                      boxShadow: isLight ? '0 24px 60px rgba(15, 23, 42, 0.18)' : '0 24px 60px rgba(0, 0, 0, 0.34)'
+                    }}
+                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                     className={cn(
-                      'cursor-grab rounded-xl border p-4 active:cursor-grabbing',
-                      draggedOverviewKey === item.key && 'opacity-50 ring-2 ring-cyan-300/40',
+                      'list-none cursor-grab rounded-xl border p-3 active:cursor-grabbing',
                       tone
                     )}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] opacity-75">
-                        <GripVertical className="h-3 w-3" />
-                        拖动
-                      </span>
-                      <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] opacity-75">
+                            <GripVertical className="h-3 w-3" />
+                            拖动
+                          </span>
+                          <span className="rounded-full border px-2 py-0.5 text-[10px]">
+                            {item.importance === 'critical' ? '高优先' : item.importance === 'high' ? '重点' : '观察'}
+                          </span>
+                          <span className="text-[10px] opacity-75">{item.reportCount} 期</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
+                          item.pinned
+                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
+                            : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
+                        )}
+                      >
                         <Pin className="h-3 w-3" />
-                        {item.pinned ? '已钉住' : getOverviewStatusLabel(item.status)}
-                      </span>
-                      <span className="rounded-full border px-2.5 py-1 text-[11px]">
-                        {item.importance === 'critical' ? '高优先' : item.importance === 'high' ? '重点' : '观察'}
-                      </span>
-                      <span className="text-[11px] opacity-80">{item.reportCount} 期提及</span>
+                        {item.pinned ? '已钉住' : '钉住'}
+                      </button>
                     </div>
-                    <h3 className="mt-3 text-base font-semibold leading-7">
+                    <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-6">
                       {renderHighlightedByTerms(item.title, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
                     </h3>
-                    <p className="mt-2 text-sm leading-6 opacity-90">
+                    <p className="mt-1.5 line-clamp-2 text-xs leading-5 opacity-90">
                       {renderHighlightedByTerms(item.summary, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
                     </p>
-                    <p className="mt-3 text-xs leading-5 opacity-80">
+                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 opacity-75">
                       {renderHighlightedByTerms(item.reason, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {item.matchedKeywords.slice(0, 4).map((keyword) => (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {item.matchedKeywords.slice(0, 3).map((keyword) => (
                         <button
                           key={`${item.key}-${keyword.slug}`}
                           onClick={() => onSelectKeyword(keyword.slug)}
-                          className={cn('rounded-full border px-2.5 py-1 text-[11px] transition', isLight ? 'border-white/70 bg-white text-slate-700 hover:border-cyan-200' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-cyan-300/30')}
+                          className={cn('rounded-full border px-2 py-0.5 text-[10px] transition', isLight ? 'border-white/70 bg-white text-slate-700 hover:border-cyan-200' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-cyan-300/30')}
                         >
                           {keyword.label}
                         </button>
                       ))}
                     </div>
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-                      <button
-                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-medium transition',
-                          item.pinned
-                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
-                            : (isLight ? 'border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
-                        )}
-                      >
-                        <Pin className="h-3.5 w-3.5" />
-                        {item.pinned ? '取消钉住' : '钉住'}
-                      </button>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="text-[11px] opacity-75">{item.pinned ? '人工钉住' : getOverviewStatusLabel(item.status)}</span>
                       <button
                         onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
-                        className={cn('inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
+                        className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
                       >
                         打开关联日报
                         <ExternalLink className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                  </div>
+                  </Reorder.Item>
                 );
               })}
               {overviewItems.length === 0 && (
@@ -323,19 +359,7 @@ export default function DailyReportTab({
                   当前搜索条件下没有命中的总览重点，可以换一个关键词，或先查看完整日报历史。
                 </div>
               )}
-            </div>
-          <label className={cn(
-            'flex items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-sm',
-            isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
-          )}>
-            <Search className="h-4 w-4 text-cyan-300" />
-            <input
-              value={searchText}
-              onChange={(event) => onSearchTextChange(event.target.value)}
-              placeholder="搜索 BIM / 数字孪生 / Revit，查找相关日报…"
-              className={cn('w-full bg-transparent text-sm outline-none placeholder:text-slate-400', isLight ? 'text-slate-900' : 'text-white')}
-            />
-          </label>
+            </Reorder.Group>
         </div>
       </section>
 
@@ -397,8 +421,9 @@ export default function DailyReportTab({
           </div>
         </div>
 
-        <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex min-w-0 flex-1 flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
             <label className={cn('inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
               <Filter className="h-4 w-4 text-cyan-300" />
               <span>来源筛选</span>
@@ -413,6 +438,20 @@ export default function DailyReportTab({
                 ))}
               </select>
             </label>
+
+            <label className={cn(
+              'flex min-w-[260px] flex-1 items-center gap-3 rounded-2xl border px-3 py-2 text-sm shadow-sm xl:max-w-xl',
+              isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
+            )}>
+              <Search className="h-4 w-4 shrink-0 text-cyan-300" />
+              <input
+                value={searchText}
+                onChange={(event) => onSearchTextChange(event.target.value)}
+                placeholder="搜索 BIM / 数字孪生 / Revit，查找相关日报…"
+                className={cn('w-full bg-transparent text-sm outline-none placeholder:text-slate-400', isLight ? 'text-slate-900' : 'text-white')}
+              />
+            </label>
+            </div>
 
             <div className="flex flex-wrap gap-2">
               <button
@@ -512,7 +551,7 @@ export default function DailyReportTab({
           </div>
         </aside>
 
-        <section className="space-y-6">
+        <section id="daily-report-content" className="space-y-6 scroll-mt-24">
           <div className={cn(
             'rounded-[24px] border p-5 shadow-[0_18px_60px_rgba(0,0,0,0.12)]',
             isLight ? 'border-slate-200 bg-white' : 'border-white/10 bg-white/[0.03]'
