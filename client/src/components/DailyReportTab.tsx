@@ -1,5 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { motion, type PanInfo } from 'framer-motion';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyOverviewSnapshot, DailyReport } from '../services/api';
@@ -154,6 +172,142 @@ function getOverviewTone(importance: 'critical' | 'high' | 'watch', isLight: boo
     : 'border-white/10 bg-white/[0.04] text-slate-200';
 }
 
+type DailyOverviewItem = DailyOverviewSnapshot['items'][number];
+
+type OverviewCardShellProps = {
+  item: DailyOverviewItem;
+  isLight: boolean;
+  highlightTerms: string[];
+  onSelectKeyword: (keywordSlug: string) => void;
+  onTogglePinned: (item: DailyOverviewItem) => void;
+  onOpenOverviewItem: (reportId: string) => void;
+  dragHandleRef?: (node: HTMLSpanElement | null) => void;
+  dragHandleProps?: React.HTMLAttributes<HTMLSpanElement>;
+  style?: CSSProperties;
+  setNodeRef?: (node: HTMLDivElement | null) => void;
+  isDragging?: boolean;
+  isOverlay?: boolean;
+};
+
+function OverviewCardShell({
+  item,
+  isLight,
+  highlightTerms,
+  onSelectKeyword,
+  onTogglePinned,
+  onOpenOverviewItem,
+  dragHandleRef,
+  dragHandleProps,
+  style,
+  setNodeRef,
+  isDragging = false,
+  isOverlay = false
+}: OverviewCardShellProps) {
+  const tone = getOverviewTone(item.importance, isLight);
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        'rounded-xl border p-3',
+        isOverlay ? 'pointer-events-none w-[min(380px,calc(100vw-32px))] cursor-grabbing' : 'cursor-default',
+        isDragging && 'opacity-0',
+        tone
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <span
+          ref={dragHandleRef}
+          {...dragHandleProps}
+          className={cn(
+            'mt-0.5 inline-flex h-7 w-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-full border outline-none transition active:cursor-grabbing',
+            isLight ? 'border-slate-200 bg-white text-slate-500 hover:border-cyan-200 hover:text-cyan-700' : 'border-white/10 bg-white/[0.06] text-slate-300 hover:border-cyan-300/25 hover:text-cyan-100'
+          )}
+          title="拖动排序"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          {item.matchedKeywords.slice(0, 4).map((keyword) => (
+            <button
+              key={`${item.key}-${keyword.slug}`}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onSelectKeyword(keyword.slug)}
+              className={cn(
+                'rounded-full border px-2 py-0.5 text-[10px] transition',
+                isLight ? 'border-cyan-100 bg-cyan-50 text-cyan-800 hover:border-cyan-200' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:border-cyan-300/35'
+              )}
+            >
+              {keyword.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-6">
+        {renderHighlightedByTerms(item.title, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+      </h3>
+      <p className="mt-1.5 line-clamp-2 text-xs leading-5 opacity-90">
+        {renderHighlightedByTerms(item.summary, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+      </p>
+      <p className="mt-2 line-clamp-2 text-[11px] leading-5 opacity-75">
+        {renderHighlightedByTerms(item.reason, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <button
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onTogglePinned(item)}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
+            item.pinned
+              ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
+              : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
+          )}
+        >
+          <Pin className="h-3 w-3" />
+          {item.pinned ? '已钉住' : '钉住'}
+        </button>
+        <button
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
+          className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
+        >
+          打开关联日报
+          <ExternalLink className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type SortableOverviewCardProps = Omit<OverviewCardShellProps, 'dragHandleRef' | 'dragHandleProps' | 'style' | 'setNodeRef' | 'isDragging' | 'isOverlay'>;
+
+function SortableOverviewCard(props: SortableOverviewCardProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: props.item.key });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <OverviewCardShell
+      {...props}
+      setNodeRef={setNodeRef}
+      style={style}
+      isDragging={isDragging}
+      dragHandleRef={setActivatorNodeRef}
+      dragHandleProps={{ ...attributes, ...listeners }}
+    />
+  );
+}
+
 export default function DailyReportTab({
   themeMode,
   overview,
@@ -184,12 +338,19 @@ export default function DailyReportTab({
   const [showAppendix, setShowAppendix] = useState(false);
   const overviewItems = useMemo(() => filterOverviewItems(overview, selectedKeyword, searchText), [overview, selectedKeyword, searchText]);
   const [overviewOrder, setOverviewOrder] = useState<string[]>([]);
+  const [activeOverviewKey, setActiveOverviewKey] = useState<string | null>(null);
   const overviewOrderRef = useRef<string[]>([]);
-  const draggingOverviewKeyRef = useRef<string | null>(null);
-  const overviewCardRefs = useRef(new Map<string, HTMLDivElement>());
-  const overviewOrderDirtyRef = useRef(false);
-  const lastOverviewSwapAtRef = useRef(0);
   const criticalOverviewItems = overviewItems.filter((item) => item.importance === 'critical' || item.status === 'persistent');
+  const overviewDndSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8
+      }
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates
+    })
+  );
 
   useEffect(() => {
     const nextKeys = overviewItems.map((item) => item.key);
@@ -216,58 +377,52 @@ export default function DailyReportTab({
       ...overviewItems.filter((item) => !orderedKeySet.has(item.key))
     ];
   }, [overviewItems, overviewOrder]);
-  const updateOverviewOrder = useCallback((nextOrder: string[], markDirty = false) => {
-    overviewOrderRef.current = nextOrder;
-    if (markDirty) overviewOrderDirtyRef.current = true;
-    setOverviewOrder(nextOrder);
-  }, []);
+  const activeOverviewItem = useMemo(() => {
+    if (!activeOverviewKey) return null;
+    return overviewItems.find((item) => item.key === activeOverviewKey) || null;
+  }, [activeOverviewKey, overviewItems]);
 
-  const handleOverviewDragMove = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-    const draggedKey = draggingOverviewKeyRef.current;
-    if (!draggedKey) return;
-    const now = Date.now();
-    if (now - lastOverviewSwapAtRef.current < 90) return;
-
-    const targetKey = Array.from(overviewCardRefs.current.entries()).find(([key, node]) => {
-      if (key === draggedKey) return false;
-      const rect = node.getBoundingClientRect();
-      return info.point.x >= rect.left && info.point.x <= rect.right && info.point.y >= rect.top && info.point.y <= rect.bottom;
-    })?.[0];
-
-    if (!targetKey) return;
-
-    const currentOrder = overviewOrderRef.current.length > 0
-      ? overviewOrderRef.current
-      : orderedOverviewItems.map((item) => item.key);
-    const fromIndex = currentOrder.indexOf(draggedKey);
-    const toIndex = currentOrder.indexOf(targetKey);
-    if (fromIndex < 0 || toIndex < 0) return;
-
-    const nextOrder = [...currentOrder];
-    nextOrder.splice(fromIndex, 1);
-    nextOrder.splice(toIndex, 0, draggedKey);
-    lastOverviewSwapAtRef.current = now;
-    updateOverviewOrder(nextOrder, true);
-  }, [orderedOverviewItems, updateOverviewOrder]);
-
-  const persistOverviewOrder = useCallback(() => {
-    const order = overviewOrderRef.current;
+  const persistOverviewOrder = useCallback((order: string[]) => {
     if (order.length === 0) return;
+    overviewOrderRef.current = order;
     void onUpdateOverviewPreferences(order.map((key, index) => ({
       key,
       manualOrder: index
     })));
   }, [onUpdateOverviewPreferences]);
 
-  const finishOverviewDrag = useCallback(() => {
-    if (!draggingOverviewKeyRef.current) {
-      return;
-    }
-    const shouldPersist = overviewOrderDirtyRef.current;
-    overviewOrderDirtyRef.current = false;
-    draggingOverviewKeyRef.current = null;
-    if (shouldPersist) persistOverviewOrder();
-  }, [persistOverviewOrder]);
+  const handleOverviewDragStart = useCallback((event: DragStartEvent) => {
+    setActiveOverviewKey(String(event.active.id));
+  }, []);
+
+  const handleOverviewDragEnd = useCallback((event: DragEndEvent) => {
+    const activeKey = String(event.active.id);
+    const overKey = event.over ? String(event.over.id) : '';
+    setActiveOverviewKey(null);
+
+    if (!overKey || activeKey === overKey) return;
+
+    const currentOrder = orderedOverviewItems.map((item) => item.key);
+    const oldIndex = currentOrder.indexOf(activeKey);
+    const newIndex = currentOrder.indexOf(overKey);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const nextOrder = arrayMove(currentOrder, oldIndex, newIndex);
+    setOverviewOrder(nextOrder);
+    persistOverviewOrder(nextOrder);
+  }, [orderedOverviewItems, persistOverviewOrder]);
+
+  const handleOverviewDragCancel = useCallback(() => {
+    setActiveOverviewKey(null);
+  }, []);
+
+  const toggleOverviewPinned = useCallback((item: DailyOverviewItem) => {
+    void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }]);
+  }, [onUpdateOverviewPreferences]);
+
+  const openOverviewReport = useCallback((reportId: string) => {
+    onOpenOverviewItem(reportId);
+  }, [onOpenOverviewItem]);
 
   return (
     <div className="space-y-6">
@@ -306,109 +461,47 @@ export default function DailyReportTab({
         </div>
 
         <div className="mt-5 space-y-4">
-            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-              {orderedOverviewItems.map((item) => {
-                const tone = getOverviewTone(item.importance, isLight);
-                return (
-                  <motion.div
-                    layout="position"
+          <DndContext
+            sensors={overviewDndSensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleOverviewDragStart}
+            onDragEnd={handleOverviewDragEnd}
+            onDragCancel={handleOverviewDragCancel}
+          >
+            <SortableContext items={orderedOverviewItems.map((item) => item.key)} strategy={rectSortingStrategy}>
+              <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {orderedOverviewItems.map((item) => (
+                  <SortableOverviewCard
                     key={item.key}
-                    ref={(node) => {
-                      if (node) overviewCardRefs.current.set(item.key, node);
-                      else overviewCardRefs.current.delete(item.key);
-                    }}
-                    drag
-                    dragMomentum={false}
-                    dragElastic={0.04}
-                    dragSnapToOrigin
-                    onDragStart={() => {
-                      draggingOverviewKeyRef.current = item.key;
-                      overviewOrderDirtyRef.current = false;
-                      lastOverviewSwapAtRef.current = 0;
-                    }}
-                    onDrag={handleOverviewDragMove}
-                    onDragEnd={finishOverviewDrag}
-                    whileDrag={{
-                      scale: 1.018,
-                      zIndex: 40,
-                      boxShadow: isLight ? '0 22px 54px rgba(15, 23, 42, 0.16)' : '0 24px 58px rgba(0, 0, 0, 0.36)'
-                    }}
-                    transition={{
-                      layout: { type: 'spring', stiffness: 520, damping: 46 },
-                      scale: { duration: 0.12 }
-                    }}
-                    className={cn(
-                      'touch-none cursor-grab rounded-xl border p-3 active:cursor-grabbing',
-                      tone
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      <span
-                        className={cn(
-                          'mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
-                          isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/[0.06] text-slate-300'
-                        )}
-                        title="拖动排序"
-                      >
-                        <GripVertical className="h-3.5 w-3.5" />
-                      </span>
-                      <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-                        {item.matchedKeywords.slice(0, 4).map((keyword) => (
-                          <button
-                            key={`${item.key}-${keyword.slug}`}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={() => onSelectKeyword(keyword.slug)}
-                            className={cn(
-                              'rounded-full border px-2 py-0.5 text-[10px] transition',
-                              isLight ? 'border-cyan-100 bg-cyan-50 text-cyan-800 hover:border-cyan-200' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:border-cyan-300/35'
-                            )}
-                          >
-                            {keyword.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-6">
-                      {renderHighlightedByTerms(item.title, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                    </h3>
-                    <p className="mt-1.5 line-clamp-2 text-xs leading-5 opacity-90">
-                      {renderHighlightedByTerms(item.summary, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                    </p>
-                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 opacity-75">
-                      {renderHighlightedByTerms(item.reason, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <button
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
-                        className={cn(
-                          'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
-                          item.pinned
-                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
-                            : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
-                        )}
-                      >
-                        <Pin className="h-3 w-3" />
-                        {item.pinned ? '已钉住' : '钉住'}
-                      </button>
-                      <button
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
-                        className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
-                      >
-                        打开关联日报
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-              {overviewItems.length === 0 && (
-                <div className={cn('rounded-2xl border border-dashed px-4 py-8 text-center text-sm lg:col-span-2 xl:col-span-3', isLight ? 'border-slate-200 text-slate-500' : 'border-white/10 text-slate-400')}>
-                  当前搜索条件下没有命中的总览重点，可以换一个关键词，或先查看完整日报历史。
-                </div>
-              )}
-            </div>
+                    item={item}
+                    isLight={isLight}
+                    highlightTerms={highlightTerms}
+                    onSelectKeyword={onSelectKeyword}
+                    onTogglePinned={toggleOverviewPinned}
+                    onOpenOverviewItem={openOverviewReport}
+                  />
+                ))}
+                {overviewItems.length === 0 && (
+                  <div className={cn('rounded-2xl border border-dashed px-4 py-8 text-center text-sm lg:col-span-2 xl:col-span-3', isLight ? 'border-slate-200 text-slate-500' : 'border-white/10 text-slate-400')}>
+                    当前搜索条件下没有命中的总览重点，可以换一个关键词，或先查看完整日报历史。
+                  </div>
+                )}
+              </div>
+            </SortableContext>
+            <DragOverlay dropAnimation={null}>
+              {activeOverviewItem ? (
+                <OverviewCardShell
+                  item={activeOverviewItem}
+                  isLight={isLight}
+                  highlightTerms={highlightTerms}
+                  onSelectKeyword={onSelectKeyword}
+                  onTogglePinned={toggleOverviewPinned}
+                  onOpenOverviewItem={openOverviewReport}
+                  isOverlay
+                />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         </div>
       </section>
 
