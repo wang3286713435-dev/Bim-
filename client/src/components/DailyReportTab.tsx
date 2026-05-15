@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { motion } from 'framer-motion';
+import { motion, type PanInfo } from 'framer-motion';
 import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyOverviewSnapshot, DailyReport } from '../services/api';
@@ -184,9 +184,11 @@ export default function DailyReportTab({
   const [showAppendix, setShowAppendix] = useState(false);
   const overviewItems = useMemo(() => filterOverviewItems(overview, selectedKeyword, searchText), [overview, selectedKeyword, searchText]);
   const [overviewOrder, setOverviewOrder] = useState<string[]>([]);
-  const [draggingOverviewKey, setDraggingOverviewKey] = useState<string | null>(null);
   const overviewOrderRef = useRef<string[]>([]);
   const draggingOverviewKeyRef = useRef<string | null>(null);
+  const overviewCardRefs = useRef(new Map<string, HTMLDivElement>());
+  const overviewOrderDirtyRef = useRef(false);
+  const lastOverviewSwapAtRef = useRef(0);
   const criticalOverviewItems = overviewItems.filter((item) => item.importance === 'critical' || item.status === 'persistent');
 
   useEffect(() => {
@@ -214,14 +216,26 @@ export default function DailyReportTab({
       ...overviewItems.filter((item) => !orderedKeySet.has(item.key))
     ];
   }, [overviewItems, overviewOrder]);
-  const updateOverviewOrder = useCallback((nextOrder: string[]) => {
+  const updateOverviewOrder = useCallback((nextOrder: string[], markDirty = false) => {
     overviewOrderRef.current = nextOrder;
+    if (markDirty) overviewOrderDirtyRef.current = true;
     setOverviewOrder(nextOrder);
   }, []);
 
-  const handleOverviewDragEnter = useCallback((targetKey: string) => {
+  const handleOverviewDragMove = useCallback((_event: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
     const draggedKey = draggingOverviewKeyRef.current;
-    if (!draggedKey || draggedKey === targetKey) return;
+    if (!draggedKey) return;
+    const now = Date.now();
+    if (now - lastOverviewSwapAtRef.current < 90) return;
+
+    const targetKey = Array.from(overviewCardRefs.current.entries()).find(([key, node]) => {
+      if (key === draggedKey) return false;
+      const rect = node.getBoundingClientRect();
+      return info.point.x >= rect.left && info.point.x <= rect.right && info.point.y >= rect.top && info.point.y <= rect.bottom;
+    })?.[0];
+
+    if (!targetKey) return;
+
     const currentOrder = overviewOrderRef.current.length > 0
       ? overviewOrderRef.current
       : orderedOverviewItems.map((item) => item.key);
@@ -232,7 +246,8 @@ export default function DailyReportTab({
     const nextOrder = [...currentOrder];
     nextOrder.splice(fromIndex, 1);
     nextOrder.splice(toIndex, 0, draggedKey);
-    updateOverviewOrder(nextOrder);
+    lastOverviewSwapAtRef.current = now;
+    updateOverviewOrder(nextOrder, true);
   }, [orderedOverviewItems, updateOverviewOrder]);
 
   const persistOverviewOrder = useCallback(() => {
@@ -246,12 +261,12 @@ export default function DailyReportTab({
 
   const finishOverviewDrag = useCallback(() => {
     if (!draggingOverviewKeyRef.current) {
-      setDraggingOverviewKey(null);
       return;
     }
+    const shouldPersist = overviewOrderDirtyRef.current;
+    overviewOrderDirtyRef.current = false;
     draggingOverviewKeyRef.current = null;
-    setDraggingOverviewKey(null);
-    persistOverviewOrder();
+    if (shouldPersist) persistOverviewOrder();
   }, [persistOverviewOrder]);
 
   return (
@@ -296,31 +311,34 @@ export default function DailyReportTab({
                 const tone = getOverviewTone(item.importance, isLight);
                 return (
                   <motion.div
-                    layout
+                    layout="position"
                     key={item.key}
-                    draggable
-                    onDragStartCapture={(event) => {
+                    ref={(node) => {
+                      if (node) overviewCardRefs.current.set(item.key, node);
+                      else overviewCardRefs.current.delete(item.key);
+                    }}
+                    drag
+                    dragMomentum={false}
+                    dragElastic={0.04}
+                    dragSnapToOrigin
+                    onDragStart={() => {
                       draggingOverviewKeyRef.current = item.key;
-                      setDraggingOverviewKey(item.key);
-                      event.dataTransfer.effectAllowed = 'move';
-                      event.dataTransfer.setData('text/plain', item.key);
+                      overviewOrderDirtyRef.current = false;
+                      lastOverviewSwapAtRef.current = 0;
                     }}
-                    onDragEnterCapture={() => handleOverviewDragEnter(item.key)}
-                    onDragOverCapture={(event) => event.preventDefault()}
-                    onDropCapture={(event) => {
-                      event.preventDefault();
-                      finishOverviewDrag();
+                    onDrag={handleOverviewDragMove}
+                    onDragEnd={finishOverviewDrag}
+                    whileDrag={{
+                      scale: 1.018,
+                      zIndex: 40,
+                      boxShadow: isLight ? '0 22px 54px rgba(15, 23, 42, 0.16)' : '0 24px 58px rgba(0, 0, 0, 0.36)'
                     }}
-                    onDragEndCapture={finishOverviewDrag}
-                    whileHover={{ y: -2 }}
-                    animate={{
-                      scale: draggingOverviewKey === item.key ? 1.015 : 1,
-                      opacity: draggingOverviewKey === item.key ? 0.72 : 1
+                    transition={{
+                      layout: { type: 'spring', stiffness: 520, damping: 46 },
+                      scale: { duration: 0.12 }
                     }}
-                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                     className={cn(
-                      'cursor-grab rounded-xl border p-3 active:cursor-grabbing',
-                      draggingOverviewKey === item.key && 'ring-2 ring-cyan-300/35',
+                      'touch-none cursor-grab rounded-xl border p-3 active:cursor-grabbing',
                       tone
                     )}
                   >
@@ -338,6 +356,7 @@ export default function DailyReportTab({
                         {item.matchedKeywords.slice(0, 4).map((keyword) => (
                           <button
                             key={`${item.key}-${keyword.slug}`}
+                            onPointerDown={(event) => event.stopPropagation()}
                             onClick={() => onSelectKeyword(keyword.slug)}
                             className={cn(
                               'rounded-full border px-2 py-0.5 text-[10px] transition',
@@ -360,6 +379,7 @@ export default function DailyReportTab({
                     </p>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <button
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
                         className={cn(
                           'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
@@ -372,6 +392,7 @@ export default function DailyReportTab({
                         {item.pinned ? '已钉住' : '钉住'}
                       </button>
                       <button
+                        onPointerDown={(event) => event.stopPropagation()}
                         onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
                         className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
                       >
