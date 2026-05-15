@@ -115,6 +115,7 @@ export interface DailyArticle {
   id: string;
   reportId: string;
   reportDate: string;
+  reportDateLabel?: string;
   sourceId: string;
   sourceName: string;
   sourceType: string | null;
@@ -157,6 +158,7 @@ export interface DailyReportSection {
 export interface DailyReport {
   id: string;
   reportDate: string;
+  reportDateLabel: string;
   title: string;
   intro: string;
   executiveSummary: string;
@@ -208,6 +210,28 @@ export interface DailyHealthStatus {
     resultCount: number;
     elapsedMs: number;
     errorMessage: string | null;
+  }>;
+  latestPush: {
+    id: string;
+    reportId: string;
+    triggerType: string;
+    channel: string;
+    status: string;
+    errorMessage: string | null;
+    payloadDigest: string | null;
+    pushedAt: string | null;
+    createdAt: string;
+  } | null;
+  pushHistory: Array<{
+    id: string;
+    reportId: string;
+    triggerType: string;
+    channel: string;
+    status: string;
+    errorMessage: string | null;
+    payloadDigest: string | null;
+    pushedAt: string | null;
+    createdAt: string;
   }>;
   queue: {
     running: boolean;
@@ -658,6 +682,13 @@ export const dailyApi = {
   getHealth: () => request<DailyHealthStatus>('/daily/health'),
 
   run: () => request<{ accepted: boolean; message: string; state: DailyHealthStatus['queue'] }>('/daily/run', {
+    method: 'POST'
+  }),
+
+  pushFeishu: (reportId: string) => request<{
+    status: 'sent' | 'skipped' | 'failed';
+    log: DailyHealthStatus['latestPush'];
+  }>(`/daily/reports/${reportId}/push-feishu`, {
     method: 'POST'
   }),
 };

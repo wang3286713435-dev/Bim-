@@ -4,7 +4,7 @@
 
 ## 当前版本
 
-- `v1.7.2`（BIM 日报 P0：来源定向召回 + AI 审稿式总结）
+- `v1.7.4`（BIM 日报飞书模板化输出 + 日期口径修复）
 - 运行模式：后端托管前端的单应用模式
 - 默认访问地址：[http://localhost:3001](http://localhost:3001)
 
@@ -40,6 +40,7 @@
 - 列表抓取、详情增强、AI 识别、结构化字段提取、入库展示全链路闭环
 - 新增独立 `BIM 日报` 模块：每天自动汇总 BIM 行业资讯、政策、案例、软件与标准动态
 - `BIM 日报` 支持管理层摘要、重点观察、今日新增 / 延续关注区分，原始资讯默认折叠为来源附录
+- `BIM 日报` 支持飞书模板化推送：固定卡片输出管理层摘要、今日重点、建议跟踪与平台内日报入口
 - 投标机会清单与项目详情页分层展示
 - 招采结构化筛选：地区、预算、截止时间、平台、BIM 类型
 - Firecrawl 详情增强与二段深度解析队列
@@ -119,9 +120,17 @@ HOTSPOT_CHECK_CRON=0 0 * * *
 HOTSPOT_CHECK_INTERVAL_HOURS=24
 DAILY_REPORT_CRON=0 9 * * *
 DAILY_REPORT_LOOKBACK_HOURS=24
-DAILY_REPORT_FALLBACK_LOOKBACK_HOURS=48
-DAILY_REPORT_ARTICLES_PER_SOURCE=6
+DAILY_REPORT_FALLBACK_LOOKBACK_HOURS=72
+DAILY_REPORT_EXTENDED_LOOKBACK_HOURS=168
+DAILY_REPORT_ARTICLES_PER_SOURCE=4
+DAILY_REPORT_MIN_ARTICLES_PER_SOURCE=2
+DAILY_REPORT_FINAL_ARTICLE_LIMIT=8
 DAILY_REPORT_AI_CONCURRENCY=2
+DAILY_REPORT_DETAIL_CONCURRENCY=2
+DAILY_REPORT_FEISHU_AUTO_PUSH=true
+DAILY_REPORT_FEISHU_PUSH_ON_MANUAL=false
+DAILY_REPORT_FEISHU_HIGHLIGHT_LIMIT=4
+DAILY_REPORT_FEISHU_ACTION_LIMIT=3
 AUTH_USERNAME=admin
 AUTH_PASSWORD=88888888
 AUTH_SESSION_SECRET=change_this_before_public_release
@@ -155,11 +164,25 @@ FEISHU_BITABLE_TABLE_ID=
 - `OPENCLAW_DETAIL_AGENT_ID=bim-tender`：详情字段补强继续使用更重的专用 agent。
 - `OPENCLAW_DETAIL_LOCAL=false`：默认保守，避免浏览器型详情任务在不兼容环境下被过早切到本地模式。
 - `HOTSPOT_CHECK_*`：默认每天 `00:00` 扫描一次，降低高频探测导致的 WAF 风险。
-- `DAILY_REPORT_*`：独立控制 `BIM 日报` 的生成时间、回看窗口与单源收录上限；默认每天 `09:00` 生成一篇日报。
+- `DAILY_REPORT_*`：独立控制 `BIM 日报` 的生成时间、回看窗口、入选上限与飞书自动推送；默认每天 `09:00` 生成一篇日报，并在成功后自动推送飞书。
 - `AUTH_*`：访问保护配置。默认账号密码是 `admin / 88888888`，正式对外前建议至少修改密码和 `AUTH_SESSION_SECRET`。
 - `AUTH_COOKIE_SECURE=true`：正式域名走 HTTPS 时建议开启，这样登录 Cookie 不会在明文 HTTP 里传输。
 - `FORCE_HTTPS=true`：建议正式域名环境开启；用户即使误输入 `http://`，也会自动跳到 `https://`。
 - `TENDER_KEYWORD_COOLDOWN_*`：对连续多轮 `0 saved` 的关键词做自动降频；默认达到 `4` 轮连续零产出后冷却 `24h`，减少空转扫描。
+
+## BIM 日报飞书输出
+
+- 默认行为：每天 `09:00` 的 `scheduled` BIM 日报生成成功后，自动推送一张飞书日报卡片到已配置群 webhook。
+- 手动生成日报默认**不自动推送**，避免调试阶段刷屏；如需手动补发，可在站内 `BIM 日报` 页面点击 `推送到飞书`。
+- 推送卡片固定包含：
+  - 日报标题与导语
+  - 管理层摘要
+  - `3-4` 条今日重点
+  - `2-3` 条建议跟踪
+  - 关键词命中概览
+  - 平台内日报深链接
+- 深链接格式：
+  - `https://tender.zhuoyusmart.top/?tab=daily&reportId=<日报ID>`
 
 ### 本地开发
 

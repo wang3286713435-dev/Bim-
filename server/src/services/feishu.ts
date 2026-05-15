@@ -1,6 +1,12 @@
 import axios from 'axios';
 import crypto from 'node:crypto';
 
+export type FeishuWebhookSendResult = {
+  ok: boolean;
+  skipped: boolean;
+  errorMessage?: string;
+};
+
 export interface FeishuHotspot {
   id: string;
   title: string;
@@ -255,14 +261,11 @@ async function sendFeishuWebhookCard(hotspot: FeishuHotspot, options?: { force?:
   const config = getFeishuWebhookConfig();
   if (!config.enabled || !config.webhook) return false;
   if (!options?.force && !shouldNotifyFeishuWebhook(hotspot)) return false;
-
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const sign = config.secret ? buildWebhookSign(config.secret, timestamp) : undefined;
   const completeness = getTenderFieldCompleteness(hotspot);
   const decision = getBusinessDecision(hotspot);
 
   try {
-    await axios.post(config.webhook, {
+    const result = await sendFeishuWebhookMessage({
       msg_type: 'interactive',
       card: {
         config: { wide_screen_mode: true, enable_forward: true },
@@ -309,13 +312,46 @@ async function sendFeishuWebhookCard(hotspot: FeishuHotspot, options?: { force?:
           }
         ]
       },
-      ...(sign ? { timestamp, sign } : {})
-    }, { timeout: 15000 });
+    });
 
-    return true;
+    return result.ok;
   } catch (error) {
     console.error('Failed to send Feishu webhook:', error);
     return false;
+  }
+}
+
+export async function sendFeishuWebhookMessage(payload: Record<string, unknown>): Promise<FeishuWebhookSendResult> {
+  const config = getFeishuWebhookConfig();
+  if (!config.enabled || !config.webhook) {
+    return {
+      ok: false,
+      skipped: true,
+      errorMessage: 'Feishu webhook is not configured'
+    };
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const sign = config.secret ? buildWebhookSign(config.secret, timestamp) : undefined;
+
+  try {
+    await axios.post(config.webhook, {
+      ...payload,
+      ...(sign ? { timestamp, sign } : {})
+    }, { timeout: 15000 });
+
+    return {
+      ok: true,
+      skipped: false
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Failed to send Feishu webhook message:', error);
+    return {
+      ok: false,
+      skipped: false,
+      errorMessage: message
+    };
   }
 }
 

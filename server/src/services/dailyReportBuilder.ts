@@ -1,4 +1,5 @@
 import type { DailyKeywordHit } from './dailyKeywordMatcher.js';
+import { formatDailyReportDateLabel } from './dailyReportDate.js';
 
 export type DailySectionTitle =
   | '政策与标准'
@@ -341,7 +342,7 @@ export function buildDailyReportDraft(
     }))
     .filter((section) => section.items.length > 0);
 
-  const dateLabel = reportDate.toISOString().slice(0, 10);
+  const dateLabel = formatDailyReportDateLabel(reportDate);
   const topKeywords = keywordStats.slice(0, 3).map((item) => `${item.label} ${item.count}`).join('｜') || '无重点关键词命中';
   const highlights = buildManagementHighlights(selectedArticles);
 

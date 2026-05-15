@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { getDailyReportQueueState, startDailyReportInBackground } from '../jobs/dailyReportQueue.js';
 import { getDailyReportHealth, getLatestDailyReportRecord, listDailyKeywords, serializeDailyArticle, serializeDailyReportShape } from '../services/dailyReports.js';
+import { getLatestDailyReportPushLog, listRecentDailyReportPushLogs, pushDailyReportToFeishu } from '../services/dailyReportFeishu.js';
 
 const router = Router();
 
@@ -189,9 +190,15 @@ router.get('/keywords', async (_req, res) => {
 
 router.get('/health', async (_req, res) => {
   try {
-    const health = await getDailyReportHealth();
+    const [health, latestPush, pushHistory] = await Promise.all([
+      getDailyReportHealth(),
+      getLatestDailyReportPushLog(),
+      listRecentDailyReportPushLogs()
+    ]);
     res.json({
       ...health,
+      latestPush,
+      pushHistory,
       queue: getDailyReportQueueState()
     });
   } catch (error) {
@@ -210,6 +217,32 @@ router.post('/run', async (_req, res) => {
   } catch (error) {
     console.error('Error triggering daily report:', error);
     res.status(500).json({ error: 'Failed to trigger daily report' });
+  }
+});
+
+router.post('/reports/:id/push-feishu', async (req, res) => {
+  try {
+    const report = await prisma.dailyReport.findUnique({
+      where: { id: req.params.id },
+      select: { id: true }
+    });
+
+    if (!report) {
+      return res.status(404).json({ error: 'Daily report not found' });
+    }
+
+    const result = await pushDailyReportToFeishu(report.id, {
+      triggerType: 'manual_push',
+      force: true
+    });
+
+    res.json({
+      status: result.status,
+      log: result.log
+    });
+  } catch (error) {
+    console.error('Error pushing BIM daily report to Feishu:', error);
+    res.status(500).json({ error: 'Failed to push BIM daily report to Feishu' });
   }
 });
 

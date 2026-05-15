@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { generateStructuredJson } from './llmProvider.js';
+import { formatDailyReportDateLabel, toDailyReportDate } from './dailyReportDate.js';
 import { buildKeywordHitPreview, matchDailyKeywords, type DailyKeywordHit } from './dailyKeywordMatcher.js';
 import {
   applyEditorialSelection,
@@ -28,7 +29,6 @@ const DAILY_REPORT_MIN_ARTICLES_PER_SOURCE = Math.max(1, Number.parseInt(process
 const DAILY_REPORT_FINAL_ARTICLE_LIMIT = Math.max(3, Number.parseInt(process.env.DAILY_REPORT_FINAL_ARTICLE_LIMIT || '8', 10) || 8);
 const DAILY_REPORT_AI_CONCURRENCY = Math.max(1, Math.min(4, Number.parseInt(process.env.DAILY_REPORT_AI_CONCURRENCY || '2', 10) || 2));
 const DAILY_REPORT_DETAIL_CONCURRENCY = Math.max(1, Math.min(4, Number.parseInt(process.env.DAILY_REPORT_DETAIL_CONCURRENCY || '2', 10) || 2));
-const DAILY_REPORT_TIMEZONE = process.env.DAILY_REPORT_TIMEZONE || 'Asia/Shanghai';
 
 type DailyKeywordRecord = {
   id: string;
@@ -83,22 +83,6 @@ function normalizeText(value: string): string {
     .replace(/&nbsp;/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function formatDateParts(date = new Date()): { key: string; label: string } {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: DAILY_REPORT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-  const key = formatter.format(date);
-  return { key, label: key };
-}
-
-function toReportDate(date = new Date()): Date {
-  const { key } = formatDateParts(date);
-  return new Date(`${key}T00:00:00+08:00`);
 }
 
 function parseAliases(value: string | null): string[] {
@@ -314,7 +298,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
     }
   });
 
-  const reportDate = toReportDate(new Date());
+  const reportDate = toDailyReportDate(new Date());
   const activeSources = await prisma.dailySource.findMany({
     where: { isActive: true },
     orderBy: { createdAt: 'asc' }
@@ -464,7 +448,7 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
     return {
       runId: run.id,
       reportId: completeReport.id,
-      reportDate: formatDateParts(reportDate).key,
+      reportDate: formatDailyReportDateLabel(reportDate),
       sourceCount: finalDraft.sourceCount,
       articleCount: finalDraft.articleCount,
       report: serializeDailyReportShape(completeReport)
@@ -511,6 +495,7 @@ export function serializeDailyArticle(article: DailyArticleWithRelations) {
     id: article!.id,
     reportId: article!.reportId,
     reportDate: article!.reportDate.toISOString(),
+    reportDateLabel: formatDailyReportDateLabel(article!.reportDate),
     sourceId: article!.sourceId,
     sourceName: article?.source?.name || article!.sourceId,
     sourceType: article?.source?.sourceType || null,
@@ -545,6 +530,7 @@ export function serializeDailyReportShape(report: {
   return {
     id: report.id,
     reportDate: report.reportDate.toISOString(),
+    reportDateLabel: formatDailyReportDateLabel(report.reportDate),
     title: report.title,
     intro: report.intro,
     executiveSummary: report.executiveSummary,

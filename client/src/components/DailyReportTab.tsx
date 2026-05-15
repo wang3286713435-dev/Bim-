@@ -17,10 +17,12 @@ type DailyReportTabProps = {
   health: DailyHealthStatus | null;
   isLoading: boolean;
   isRunning: boolean;
+  isPushingFeishu: boolean;
   onSelectReport: (reportId: string) => void;
   onSelectSource: (sourceId: string) => void;
   onSelectKeyword: (keywordSlug: string) => void;
   onRunReport: () => Promise<void>;
+  onPushFeishu: (reportId: string) => Promise<void>;
 };
 
 function escapeRegExp(value: string): string {
@@ -90,10 +92,12 @@ export default function DailyReportTab({
   health,
   isLoading,
   isRunning,
+  isPushingFeishu,
   onSelectReport,
   onSelectSource,
   onSelectKeyword,
-  onRunReport
+  onRunReport,
+  onPushFeishu
 }: DailyReportTabProps) {
   const isLight = themeMode === 'light';
   const selectedTerms = getSelectedTerms(keywords, selectedKeyword);
@@ -207,18 +211,33 @@ export default function DailyReportTab({
             </div>
           </div>
 
-          <button
-            onClick={() => void onRunReport()}
-            disabled={isRunning}
-            className={cn(
-              'inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium shadow-[0_18px_40px_rgba(14,165,233,0.18)] transition',
-              isLight ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-cyan-500/90 text-slate-950 hover:bg-cyan-400',
-              isRunning && 'cursor-wait opacity-70'
-            )}
-          >
-            <RefreshCw className={cn('h-4 w-4', isRunning && 'animate-spin')} />
-            {isRunning ? '生成中…' : '手动生成今日日报'}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => selectedReport && void onPushFeishu(selectedReport.id)}
+              disabled={!selectedReport || isPushingFeishu}
+              className={cn(
+                'inline-flex items-center justify-center gap-2 rounded-2xl border px-4 py-2 text-sm font-medium transition',
+                isLight ? 'border-slate-200 bg-white text-slate-700 hover:border-cyan-300 hover:text-cyan-700' : 'border-white/10 bg-white/[0.04] text-slate-200 hover:border-cyan-300/30',
+                (!selectedReport || isPushingFeishu) && 'cursor-not-allowed opacity-60'
+              )}
+            >
+              <ExternalLink className={cn('h-4 w-4', isPushingFeishu && 'animate-pulse')} />
+              {isPushingFeishu ? '推送中…' : '推送到飞书'}
+            </button>
+
+            <button
+              onClick={() => void onRunReport()}
+              disabled={isRunning}
+              className={cn(
+                'inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium shadow-[0_18px_40px_rgba(14,165,233,0.18)] transition',
+                isLight ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-cyan-500/90 text-slate-950 hover:bg-cyan-400',
+                isRunning && 'cursor-wait opacity-70'
+              )}
+            >
+              <RefreshCw className={cn('h-4 w-4', isRunning && 'animate-spin')} />
+              {isRunning ? '生成中…' : '手动生成今日日报'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -245,7 +264,7 @@ export default function DailyReportTab({
                       : (isLight ? 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300' : 'border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20')
                   )}
                 >
-                  <div className="text-xs uppercase tracking-[0.14em] text-slate-500">{report.reportDate.slice(0, 10)}</div>
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-500">{report.reportDateLabel || report.reportDate.slice(0, 10)}</div>
                   <div className="mt-2 line-clamp-2 text-sm font-medium">{report.title}</div>
                   <div className="mt-2 text-xs text-slate-500">{report.articleCount} 条入选 · {report.meta.candidateArticleCount} 条候选</div>
                 </button>
@@ -271,6 +290,33 @@ export default function DailyReportTab({
             <p className={cn('mt-3 text-sm leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
               {selectedReport?.executiveSummary || '当前还没有生成可阅读的日报正文。'}
             </p>
+
+            {health?.latestPush ? (
+              <div className={cn(
+                'mt-4 rounded-2xl border px-4 py-3 text-sm',
+                isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
+              )}>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">飞书推送</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <span className={cn(
+                    'rounded-full border px-2.5 py-1 text-[11px]',
+                    health.latestPush.status === 'sent'
+                      ? (isLight ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-emerald-300/20 bg-emerald-500/10 text-emerald-100')
+                      : health.latestPush.status === 'failed'
+                        ? (isLight ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-rose-300/20 bg-rose-500/10 text-rose-100')
+                        : (isLight ? 'border-slate-200 bg-white text-slate-600' : 'border-white/10 bg-white/[0.03] text-slate-300')
+                  )}>
+                    {health.latestPush.status === 'sent' ? '已推送飞书' : health.latestPush.status === 'failed' ? '推送失败' : '未自动推送'}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {health.latestPush.pushedAt ? `最近推送：${formatDateTime(health.latestPush.pushedAt)}` : `最近记录：${formatDateTime(health.latestPush.createdAt)}`}
+                  </span>
+                  {health.latestPush.errorMessage ? (
+                    <span className="text-xs text-rose-400">{health.latestPush.errorMessage}</span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             {selectedReport?.highlights?.length ? (
               <div className="mt-5 grid gap-3 lg:grid-cols-2">

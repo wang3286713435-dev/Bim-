@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { generateDailyReport } from '../services/dailyReports.js';
+import { autoPushDailyReportToFeishu } from '../services/dailyReportFeishu.js';
 
 type QueueState = {
   running: boolean;
@@ -87,9 +88,13 @@ export function startDailyReportInBackground(triggerType: 'manual' | 'scheduled'
   state.lastError = undefined;
 
   void generateDailyReport(triggerType)
-    .then(() => {
+    .then(async (result) => {
       if (runToken !== currentRunToken) return;
       state.lastFinishedAt = new Date();
+      const pushResult = await autoPushDailyReportToFeishu(result.reportId, triggerType);
+      if (pushResult.status === 'failed') {
+        console.warn('Daily report Feishu auto-push failed:', pushResult.log?.errorMessage || 'unknown error');
+      }
     })
     .catch((error) => {
       if (runToken !== currentRunToken) return;

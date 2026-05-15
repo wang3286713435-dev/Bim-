@@ -132,7 +132,9 @@ app.get('/api/health', async (req, res) => {
     },
     dailyReportScheduler: {
       cron: DAILY_REPORT_SCHEDULE_CRON,
-      description: DAILY_REPORT_SCHEDULE_DESCRIPTION
+      description: DAILY_REPORT_SCHEDULE_DESCRIPTION,
+      feishuAutoPushEnabled: process.env.DAILY_REPORT_FEISHU_AUTO_PUSH !== 'false',
+      feishuPushOnManual: process.env.DAILY_REPORT_FEISHU_PUSH_ON_MANUAL === 'true'
     },
     hotspotCheckQueue: getHotspotCheckQueueState(),
     dailyReportQueue: getDailyReportQueueState(),

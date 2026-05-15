@@ -199,6 +199,7 @@ model DailyReport {
   createdAt        DateTime       @default(now())
   articles         DailyArticle[]
   runs             DailyRun[]
+  pushLogs         DailyReportPushLog[]
 }
 
 model DailyArticle {
@@ -259,4 +260,21 @@ model DailyRun {
 
   @@index([startedAt])
   @@index([status])
+}
+
+model DailyReportPushLog {
+  id            String      @id @default(uuid())
+  reportId      String
+  triggerType   String
+  channel       String      @default("feishu_webhook")
+  status        String      @default("pending")
+  payloadDigest String?
+  errorMessage  String?
+  pushedAt      DateTime?
+  createdAt     DateTime    @default(now())
+  report        DailyReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, createdAt])
+  @@index([status, createdAt])
+  @@index([channel, createdAt])
 }
