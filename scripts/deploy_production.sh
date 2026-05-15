@@ -41,7 +41,7 @@ rsync -az \
 echo "==> Building and restarting service"
 ssh -o BatchMode=yes "${TARGET_HOST}" "
   chown -R '${REMOTE_OWNER}' '${REMOTE_DIR}' &&
-  runuser -u '${REMOTE_RUN_USER}' -- bash -lc 'cd \"${REMOTE_DIR}/client\" && npm run build && cd \"${REMOTE_DIR}/server\" && npm run db:generate && npm run db:push && npm run build' &&
+  runuser -u '${REMOTE_RUN_USER}' -- bash -lc 'cd \"${REMOTE_DIR}/client\" && npm install && npm run build && cd \"${REMOTE_DIR}/server\" && npm install && npm run db:generate && npm run db:push && npm run build' &&
   systemctl restart '${REMOTE_SERVICE}' &&
   sleep 3 &&
   ROOT_STATUS=\$(curl -s -H 'x-forwarded-proto: https' -o /tmp/bim_tender_root_check.html -w '%{http_code}' http://localhost:3001/) &&
