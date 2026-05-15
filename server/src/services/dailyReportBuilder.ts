@@ -64,6 +64,45 @@ export type DailyEditorialReview = {
   recommendedActions: string[];
 };
 
+export type DailyOverviewKeywordRef = {
+  label: string;
+  slug: string;
+};
+
+export type DailyOverviewItem = {
+  key: string;
+  title: string;
+  summary: string;
+  reason: string;
+  importance: 'critical' | 'high' | 'watch';
+  status: 'new' | 'persistent' | 'watch';
+  reportIds: string[];
+  reportDateLabels: string[];
+  matchedKeywords: DailyOverviewKeywordRef[];
+  sourceNames: string[];
+  firstSeenDateLabel: string;
+  lastSeenDateLabel: string;
+  reportCount: number;
+  sourceCount: number;
+};
+
+export type DailyOverviewSnapshot = {
+  title: string;
+  summary: string;
+  items: DailyOverviewItem[];
+};
+
+export type DailyOverviewReportInput = {
+  id: string;
+  reportDateLabel: string;
+  title: string;
+  highlights: string[];
+  sections: Array<{
+    title: DailySectionTitle;
+    items: DailyArticleDraft[];
+  }>;
+};
+
 const SECTION_ORDER: DailySectionTitle[] = [
   '政策与标准',
   '行业观点与趋势',
@@ -74,6 +113,16 @@ const SECTION_ORDER: DailySectionTitle[] = [
 
 function containsAny(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) => text.includes(keyword.toLowerCase()));
+}
+
+function normalizeOverviewKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\d{4}[年/-]\d{1,2}[月/-]\d{1,2}日?/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
 }
 
 export function classifyDailyArticleSection(article: Pick<DailyArticleDraft, 'sourceId' | 'title' | 'excerpt' | 'summary'>): DailySectionTitle {
@@ -364,5 +413,158 @@ export function buildDailyReportDraft(
       sourceCount,
       editorialAngle: review?.editorialAngle || undefined,
     },
+  };
+}
+
+type DailyOverviewAggregate = {
+  key: string;
+  title: string;
+  summary: string;
+  latestReportId: string;
+  latestReportDateLabel: string;
+  latestRecencyBucket?: DailyRecencyBucket;
+  reportIds: Set<string>;
+  reportDateLabels: Set<string>;
+  sourceNames: Set<string>;
+  matchedKeywords: Map<string, DailyOverviewKeywordRef>;
+  score: number;
+  latestWeight: number;
+  repeated: boolean;
+  previousStatus?: DailyOverviewItem['status'];
+  previousImportance?: DailyOverviewItem['importance'];
+};
+
+function buildOverviewReason(status: DailyOverviewItem['status'], reportCount: number, latest: boolean): string {
+  if (status === 'persistent') {
+    return `连续 ${reportCount} 期日报出现，说明它仍然值得管理层持续关注。`;
+  }
+  if (latest) {
+    return '来自最新一期日报，具备更强时效性，适合放在主视图的最显眼位置。';
+  }
+  return '与 BIM 关键方向持续相关，建议保留在总览区方便后续查阅。';
+}
+
+function buildOverviewSummary(persistentCount: number, freshCount: number, itemCount: number): string {
+  if (itemCount === 0) {
+    return '当前还没有足够强的跨日报重点信号，等待下一次日报生成后自动补齐。';
+  }
+  return `当前总览保留 ${itemCount} 条重点信号，其中 ${persistentCount} 条为持续关注，${freshCount} 条来自最新日报。`;
+}
+
+export function buildFallbackOverviewSnapshot(params: {
+  reportDateLabel: string;
+  recentReports: DailyOverviewReportInput[];
+  previousItems?: DailyOverviewItem[];
+  limit?: number;
+}): DailyOverviewSnapshot {
+  const { reportDateLabel, recentReports, previousItems = [], limit = 6 } = params;
+  const aggregates = new Map<string, DailyOverviewAggregate>();
+  const previousByKey = new Map(previousItems.map((item) => [normalizeOverviewKey(item.title) || item.key, item]));
+
+  for (const report of recentReports) {
+    const isLatestReport = report.reportDateLabel === reportDateLabel;
+    for (const section of report.sections) {
+      for (const item of section.items) {
+        const key = normalizeOverviewKey(item.title) || normalizeOverviewKey(`${item.sourceName} ${item.summary}`);
+        if (!key) continue;
+        const existing = aggregates.get(key);
+        const articleScore = scoreDailyArticle(item);
+        const latestWeight = isLatestReport ? 28 : item.recencyBucket === 'recent' ? 14 : 6;
+        const previous = previousByKey.get(key);
+        if (existing) {
+          existing.reportIds.add(report.id);
+          existing.reportDateLabels.add(report.reportDateLabel);
+          existing.sourceNames.add(item.sourceName);
+          for (const keyword of item.matchedKeywords) {
+            existing.matchedKeywords.set(keyword.slug, {
+              label: keyword.label,
+              slug: keyword.slug
+            });
+          }
+          if (articleScore + latestWeight >= existing.score) {
+            existing.title = item.title;
+            existing.summary = item.summary || item.excerpt || item.title;
+            existing.latestReportId = report.id;
+            existing.latestReportDateLabel = report.reportDateLabel;
+            existing.latestRecencyBucket = item.recencyBucket;
+            existing.score = articleScore + latestWeight;
+            existing.latestWeight = latestWeight;
+          }
+          continue;
+        }
+
+        aggregates.set(key, {
+          key,
+          title: item.title,
+          summary: item.summary || item.excerpt || item.title,
+          latestReportId: report.id,
+          latestReportDateLabel: report.reportDateLabel,
+          latestRecencyBucket: item.recencyBucket,
+          reportIds: new Set([report.id]),
+          reportDateLabels: new Set([report.reportDateLabel]),
+          sourceNames: new Set([item.sourceName]),
+          matchedKeywords: new Map(item.matchedKeywords.map((keyword) => [keyword.slug, {
+            label: keyword.label,
+            slug: keyword.slug
+          }])),
+          score: articleScore + latestWeight,
+          latestWeight,
+          repeated: false,
+          previousStatus: previous?.status,
+          previousImportance: previous?.importance
+        });
+      }
+    }
+  }
+
+  const items = [...aggregates.values()]
+    .map((aggregate): DailyOverviewItem => {
+      const reportCount = aggregate.reportIds.size;
+      const sourceCount = aggregate.sourceNames.size;
+      const isLatest = aggregate.latestReportDateLabel === reportDateLabel;
+      const persistent = reportCount >= 2 || aggregate.previousStatus === 'persistent' || aggregate.score >= 90;
+      const importance: DailyOverviewItem['importance'] = persistent && aggregate.score >= 90
+        ? 'critical'
+        : aggregate.score >= 70
+          ? 'high'
+          : 'watch';
+      const status: DailyOverviewItem['status'] = persistent
+        ? 'persistent'
+        : isLatest
+          ? 'new'
+          : 'watch';
+      return {
+        key: aggregate.key,
+        title: aggregate.title,
+        summary: aggregate.summary,
+        reason: buildOverviewReason(status, reportCount, isLatest),
+        importance,
+        status,
+        reportIds: [...aggregate.reportIds],
+        reportDateLabels: [...aggregate.reportDateLabels].sort(),
+        matchedKeywords: [...aggregate.matchedKeywords.values()].slice(0, 4),
+        sourceNames: [...aggregate.sourceNames],
+        firstSeenDateLabel: [...aggregate.reportDateLabels].sort()[0] || reportDateLabel,
+        lastSeenDateLabel: [...aggregate.reportDateLabels].sort().slice(-1)[0] || reportDateLabel,
+        reportCount,
+        sourceCount
+      };
+    })
+    .sort((left, right) => {
+      const leftRank = left.importance === 'critical' ? 3 : left.importance === 'high' ? 2 : 1;
+      const rightRank = right.importance === 'critical' ? 3 : right.importance === 'high' ? 2 : 1;
+      if (rightRank !== leftRank) return rightRank - leftRank;
+      if (right.reportCount !== left.reportCount) return right.reportCount - left.reportCount;
+      return right.lastSeenDateLabel.localeCompare(left.lastSeenDateLabel, 'zh-Hans-CN');
+    })
+    .slice(0, limit);
+
+  const persistentCount = items.filter((item) => item.status === 'persistent').length;
+  const freshCount = items.filter((item) => item.lastSeenDateLabel === reportDateLabel).length;
+
+  return {
+    title: `${reportDateLabel} BIM 日报总览`,
+    summary: buildOverviewSummary(persistentCount, freshCount, items.length),
+    items
   };
 }

@@ -1,7 +1,16 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { getDailyReportQueueState, startDailyReportInBackground } from '../jobs/dailyReportQueue.js';
-import { getDailyReportHealth, getLatestDailyReportRecord, listDailyKeywords, serializeDailyArticle, serializeDailyReportShape } from '../services/dailyReports.js';
+import {
+  buildDailyArticleWhere,
+  buildDailyReportWhere,
+  getDailyReportHealth,
+  getLatestDailyOverview,
+  getLatestDailyReportRecord,
+  listDailyKeywords,
+  serializeDailyArticle,
+  serializeDailyReportShape
+} from '../services/dailyReports.js';
 import { getLatestDailyReportPushLog, listRecentDailyReportPushLogs, pushDailyReportToFeishu } from '../services/dailyReportFeishu.js';
 
 const router = Router();
@@ -50,6 +59,17 @@ router.get('/today', async (_req, res) => {
   }
 });
 
+router.get('/overview', async (_req, res) => {
+  try {
+    res.json({
+      overview: await getLatestDailyOverview()
+    });
+  } catch (error) {
+    console.error('Error fetching daily report overview:', error);
+    res.status(500).json({ error: 'Failed to fetch daily report overview' });
+  }
+});
+
 router.get('/reports', async (req, res) => {
   try {
     const page = parsePositiveInt(req.query.page, 1);
@@ -57,25 +77,11 @@ router.get('/reports', async (req, res) => {
     const skip = (page - 1) * limit;
     const source = typeof req.query.source === 'string' ? req.query.source.trim() : '';
     const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.trim() : '';
+    const searchText = typeof req.query.searchText === 'string' ? req.query.searchText.trim() : '';
     const dateFrom = parseDateBoundary(req.query.dateFrom, 'start');
     const dateTo = parseDateBoundary(req.query.dateTo, 'end');
 
-    const where: Record<string, unknown> = {};
-    if (dateFrom || dateTo) {
-      where.reportDate = {
-        ...(dateFrom ? { gte: dateFrom } : {}),
-        ...(dateTo ? { lte: dateTo } : {})
-      };
-    }
-
-    if (source || keyword) {
-      where.articles = {
-        some: {
-          ...(source ? { sourceId: source } : {}),
-          ...(keyword ? { keywordHits: { some: { keyword: { slug: keyword } } } } : {})
-        }
-      };
-    }
+    const where = buildDailyReportWhere({ source, keyword, searchText, dateFrom, dateTo });
 
     const [reports, total] = await Promise.all([
       prisma.dailyReport.findMany({
@@ -127,24 +133,9 @@ router.get('/articles', async (req, res) => {
     const source = typeof req.query.source === 'string' ? req.query.source.trim() : '';
     const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.trim() : '';
     const reportId = typeof req.query.reportId === 'string' ? req.query.reportId.trim() : '';
+    const searchText = typeof req.query.searchText === 'string' ? req.query.searchText.trim() : '';
     const reportDate = parseDateBoundary(req.query.reportDate, 'start');
-
-    const where: Record<string, unknown> = {};
-    if (source) where.sourceId = source;
-    if (reportId) where.reportId = reportId;
-    if (reportDate && !reportId) {
-      const end = new Date(reportDate.getTime() + 24 * 60 * 60 * 1000 - 1);
-      where.reportDate = { gte: reportDate, lte: end };
-    }
-    if (keyword) {
-      where.keywordHits = {
-        some: {
-          keyword: {
-            slug: keyword
-          }
-        }
-      };
-    }
+    const where = buildDailyArticleWhere({ source, keyword, reportId, reportDate, searchText });
 
     const [articles, total] = await Promise.all([
       prisma.dailyArticle.findMany({

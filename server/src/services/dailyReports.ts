@@ -1,11 +1,16 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { generateStructuredJson } from './llmProvider.js';
 import { formatDailyReportDateLabel, toDailyReportDate } from './dailyReportDate.js';
 import { buildKeywordHitPreview, matchDailyKeywords, type DailyKeywordHit } from './dailyKeywordMatcher.js';
 import {
   applyEditorialSelection,
+  buildFallbackOverviewSnapshot,
   buildDailyReportDraft,
   selectEditorialDailyArticles,
+  type DailyOverviewItem,
+  type DailyOverviewSnapshot,
+  type DailyOverviewReportInput,
   type DailyEditorialReview,
   type DailyArticleDraft,
   type DailyRecencyBucket,
@@ -68,6 +73,10 @@ type StoredDailyMeta = {
   recommendedActions?: string[];
 };
 
+type StoredDailyOverviewSnapshot = DailyOverviewSnapshot & {
+  generatedAt?: string;
+};
+
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -87,6 +96,123 @@ function normalizeText(value: string): string {
 
 function parseAliases(value: string | null): string[] {
   return safeJsonParse<string[]>(value, []);
+}
+
+export function buildDailyReportWhere(params: {
+  source?: string;
+  keyword?: string;
+  searchText?: string;
+  dateFrom?: Date | null;
+  dateTo?: Date | null;
+}): Prisma.DailyReportWhereInput {
+  const where: Prisma.DailyReportWhereInput = {};
+  const source = params.source?.trim();
+  const keyword = params.keyword?.trim();
+  const searchText = params.searchText?.trim();
+
+  if (params.dateFrom || params.dateTo) {
+    where.reportDate = {
+      ...(params.dateFrom ? { gte: params.dateFrom } : {}),
+      ...(params.dateTo ? { lte: params.dateTo } : {}),
+    };
+  }
+
+  if (source || keyword) {
+    where.articles = {
+      some: {
+        ...(source ? { sourceId: source } : {}),
+        ...(keyword ? { keywordHits: { some: { keyword: { slug: keyword } } } } : {}),
+      }
+    };
+  }
+
+  if (searchText) {
+    const articleSearch: Prisma.DailyArticleWhereInput = {
+      OR: [
+        { title: { contains: searchText } },
+        { excerpt: { contains: searchText } },
+        { summary: { contains: searchText } },
+        { keywordHitPreview: { contains: searchText } },
+        { source: { name: { contains: searchText } } },
+        {
+          keywordHits: {
+            some: {
+              OR: [
+                { matchedText: { contains: searchText } },
+                { keyword: { label: { contains: searchText } } },
+                { keyword: { slug: { contains: searchText } } },
+              ]
+            }
+          }
+        }
+      ]
+    };
+
+    where.OR = [
+      { title: { contains: searchText } },
+      { intro: { contains: searchText } },
+      { executiveSummary: { contains: searchText } },
+      { highlightsJson: { contains: searchText } },
+      { sectionsJson: { contains: searchText } },
+      { keywordStatsJson: { contains: searchText } },
+      { metaJson: { contains: searchText } },
+      { articles: { some: articleSearch } },
+    ];
+  }
+
+  return where;
+}
+
+export function buildDailyArticleWhere(params: {
+  source?: string;
+  keyword?: string;
+  reportId?: string;
+  reportDate?: Date | null;
+  searchText?: string;
+}): Prisma.DailyArticleWhereInput {
+  const where: Prisma.DailyArticleWhereInput = {};
+  const source = params.source?.trim();
+  const keyword = params.keyword?.trim();
+  const reportId = params.reportId?.trim();
+  const searchText = params.searchText?.trim();
+
+  if (source) where.sourceId = source;
+  if (reportId) where.reportId = reportId;
+  if (params.reportDate && !reportId) {
+    const end = new Date(params.reportDate.getTime() + 24 * 60 * 60 * 1000 - 1);
+    where.reportDate = { gte: params.reportDate, lte: end };
+  }
+  if (keyword) {
+    where.keywordHits = {
+      some: {
+        keyword: {
+          slug: keyword
+        }
+      }
+    };
+  }
+  if (searchText) {
+    where.OR = [
+      { title: { contains: searchText } },
+      { excerpt: { contains: searchText } },
+      { summary: { contains: searchText } },
+      { keywordHitPreview: { contains: searchText } },
+      { source: { name: { contains: searchText } } },
+      {
+        keywordHits: {
+          some: {
+            OR: [
+              { matchedText: { contains: searchText } },
+              { keyword: { label: { contains: searchText } } },
+              { keyword: { slug: { contains: searchText } } },
+            ]
+          }
+        }
+      }
+    ];
+  }
+
+  return where;
 }
 
 function buildFallbackArticleSummary(article: DailySourceArticle): string {
@@ -279,6 +405,115 @@ async function reviewDailyCandidateSetWithAI(
   }
 }
 
+function serializeStoredOverviewSnapshot(snapshot: {
+  id?: string;
+  scope?: string;
+  title: string;
+  summary: string;
+  itemsJson: string;
+  generatedAt?: Date;
+}) {
+  const parsed = safeJsonParse<StoredDailyOverviewSnapshot>(snapshot.itemsJson, {
+    title: snapshot.title,
+    summary: snapshot.summary,
+    items: []
+  });
+
+  return {
+    id: snapshot.id || 'daily-overview',
+    scope: snapshot.scope || 'primary',
+    title: snapshot.title,
+    summary: snapshot.summary,
+    items: parsed.items || [],
+    generatedAt: snapshot.generatedAt?.toISOString() || new Date().toISOString()
+  };
+}
+
+async function buildDailyOverviewSnapshotWithAI(params: {
+  reportDateLabel: string;
+  recentReports: DailyOverviewReportInput[];
+  previousItems: DailyOverviewItem[];
+}): Promise<DailyOverviewSnapshot> {
+  const fallback = buildFallbackOverviewSnapshot(params);
+  if (fallback.items.length === 0) return fallback;
+
+  try {
+    const result = await generateStructuredJson<{
+      title: string;
+      summary: string;
+      items: Array<{
+        key: string;
+        title?: string;
+        summary?: string;
+        reason?: string;
+        importance?: 'critical' | 'high' | 'watch';
+        status?: 'new' | 'persistent' | 'watch';
+      }>;
+    }>([
+      {
+        role: 'system',
+        content: '你是 BIM 日报主编。请从候选总览项里挑出最该长期放在主视图的 3-6 条信息。今天最重要的内容要突出，跨多期反复出现的重要信息要继续保留。只输出 JSON：{"title":"","summary":"","items":[{"key":"","title":"","summary":"","reason":"","importance":"critical|high|watch","status":"new|persistent|watch"}]}'
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          reportDateLabel: params.reportDateLabel,
+          previousItems: params.previousItems.slice(0, 5).map((item) => ({
+            key: item.key,
+            title: item.title,
+            summary: item.summary,
+            status: item.status,
+            importance: item.importance,
+            reportCount: item.reportCount,
+            lastSeenDateLabel: item.lastSeenDateLabel
+          })),
+          candidates: fallback.items.map((item) => ({
+            key: item.key,
+            title: item.title,
+            summary: item.summary,
+            reason: item.reason,
+            importance: item.importance,
+            status: item.status,
+            reportCount: item.reportCount,
+            sourceCount: item.sourceCount,
+            reportDateLabels: item.reportDateLabels,
+            matchedKeywords: item.matchedKeywords.map((keyword) => keyword.label)
+          }))
+        }, null, 2)
+      }
+    ], {
+      maxTokens: 900,
+      temperature: 0.2
+    });
+
+    const fallbackByKey = new Map(fallback.items.map((item) => [item.key, item]));
+    const items = Array.isArray(result.items)
+      ? result.items.map((item) => {
+          const base = fallbackByKey.get(item.key);
+          if (!base) return null;
+          return {
+            ...base,
+            title: normalizeText(item.title || base.title) || base.title,
+            summary: normalizeText(item.summary || base.summary) || base.summary,
+            reason: normalizeText(item.reason || base.reason) || base.reason,
+            importance: item.importance || base.importance,
+            status: item.status || base.status,
+          };
+        }).filter((item): item is DailyOverviewItem => Boolean(item)).slice(0, 6)
+      : [];
+
+    if (items.length === 0) return fallback;
+
+    return {
+      title: normalizeText(result.title || fallback.title) || fallback.title,
+      summary: normalizeText(result.summary || fallback.summary) || fallback.summary,
+      items
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 function filterToUsableDailyArticles(rows: DailySourceArticle[]): DailySourceArticle[] {
   return rows.filter((item) => Boolean(item.title && item.url));
 }
@@ -299,6 +534,9 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
   });
 
   const reportDate = toDailyReportDate(new Date());
+  const previousOverviewSnapshot = await prisma.dailyOverviewSnapshot.findFirst({
+    orderBy: { generatedAt: 'desc' }
+  });
   const activeSources = await prisma.dailySource.findMany({
     where: { isActive: true },
     orderBy: { createdAt: 'asc' }
@@ -444,6 +682,38 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
     const completeReport = await prisma.dailyReport.findUniqueOrThrow({
       where: { id: report.id }
     });
+    const recentReports = await prisma.dailyReport.findMany({
+      orderBy: { reportDate: 'desc' },
+      take: 10
+    });
+    const previousOverviewItems = previousOverviewSnapshot
+      ? serializeStoredOverviewSnapshot(previousOverviewSnapshot).items
+      : [];
+    const overviewDraft = await buildDailyOverviewSnapshotWithAI({
+      reportDateLabel: formatDailyReportDateLabel(reportDate),
+      recentReports: recentReports.map((item) => toOverviewReportInput(serializeDailyReportShape(item))),
+      previousItems: previousOverviewItems
+    });
+    await prisma.dailyOverviewSnapshot.upsert({
+      where: {
+        reportId: completeReport.id
+      },
+      update: {
+        scope: 'primary',
+        title: overviewDraft.title,
+        summary: overviewDraft.summary,
+        itemsJson: JSON.stringify(overviewDraft),
+        generatedAt: new Date()
+      },
+      create: {
+        reportId: completeReport.id,
+        scope: 'primary',
+        title: overviewDraft.title,
+        summary: overviewDraft.summary,
+        itemsJson: JSON.stringify(overviewDraft),
+        generatedAt: new Date()
+      }
+    });
 
     return {
       runId: run.id,
@@ -511,6 +781,38 @@ export function serializeDailyArticle(article: DailyArticleWithRelations) {
   };
 }
 
+function toOverviewReportInput(report: ReturnType<typeof serializeDailyReportShape>): DailyOverviewReportInput {
+  return {
+    id: report.id,
+    reportDateLabel: report.reportDateLabel,
+    title: report.title,
+    highlights: report.highlights,
+    sections: report.sections.map((section) => ({
+      title: section.title,
+      items: section.items.map((item) => ({
+        sourceId: item.sourceId,
+        sourceName: item.sourceName,
+        title: item.title,
+        excerpt: item.excerpt,
+        summary: item.summary,
+        url: item.url,
+        publishedAt: item.publishedAt ? new Date(item.publishedAt) : null,
+        recencyBucket: item.recencyBucket,
+        keywordHitPreview: item.keywordHitPreview,
+        matchedKeywords: item.matchedKeywords.map((hit) => ({
+          keywordId: hit.keywordId,
+          label: hit.label,
+          slug: hit.slug,
+          category: hit.category,
+          count: hit.count,
+          matchedTexts: hit.matchedTexts,
+          hitFields: hit.hitFields
+        }))
+      }))
+    }))
+  };
+}
+
 export function serializeDailyReportShape(report: {
   id: string;
   reportDate: Date;
@@ -560,6 +862,36 @@ export function serializeDailyReportShape(report: {
   };
 }
 
+export async function getLatestDailyOverview() {
+  const snapshot = await prisma.dailyOverviewSnapshot.findFirst({
+    orderBy: { generatedAt: 'desc' }
+  });
+
+  if (!snapshot) {
+    const recentReports = await prisma.dailyReport.findMany({
+      orderBy: { reportDate: 'desc' },
+      take: 10
+    });
+    if (recentReports.length === 0) return null;
+    const serialized = recentReports.map((item) => serializeDailyReportShape(item));
+    const reportDateLabel = serialized[0]?.reportDateLabel || formatDailyReportDateLabel(new Date());
+    const fallback = buildFallbackOverviewSnapshot({
+      reportDateLabel,
+      recentReports: serialized.map((item) => toOverviewReportInput(item)),
+      previousItems: []
+    });
+    return {
+      id: 'daily-overview-fallback',
+      scope: 'primary',
+      title: fallback.title,
+      summary: fallback.summary,
+      items: fallback.items,
+      generatedAt: serialized[0]?.generatedAt || new Date().toISOString()
+    };
+  }
+  return serializeStoredOverviewSnapshot(snapshot);
+}
+
 export async function getLatestDailyReportRecord() {
   return prisma.dailyReport.findFirst({
     orderBy: { reportDate: 'desc' }
@@ -583,10 +915,11 @@ export async function listDailyKeywords() {
 }
 
 export async function getDailyReportHealth() {
-  const [latestRun, latestReport, sources] = await Promise.all([
+  const [latestRun, latestReport, sources, overview] = await Promise.all([
     prisma.dailyRun.findFirst({ orderBy: { startedAt: 'desc' } }),
     prisma.dailyReport.findFirst({ orderBy: { reportDate: 'desc' } }),
-    prisma.dailySource.findMany({ orderBy: { createdAt: 'asc' } })
+    prisma.dailySource.findMany({ orderBy: { createdAt: 'asc' } }),
+    getLatestDailyOverview()
   ]);
 
   const sourceSummary = safeJsonParse<DailyRunSourceSummary[]>(latestRun?.sourceSummaryJson, []);
@@ -603,6 +936,7 @@ export async function getDailyReportHealth() {
       completedAt: latestRun.completedAt?.toISOString() || null
     } : null,
     latestReport: latestReport ? serializeDailyReportShape(latestReport) : null,
+    overview,
     sources: sources.map((source) => {
       const summary = sourceSummary.find((item) => item.sourceId === source.id);
       return {

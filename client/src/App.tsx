@@ -49,6 +49,7 @@ import {
   type DailyArticle,
   type DailyHealthStatus,
   type DailyKeyword,
+  type DailyOverviewSnapshot,
   type DailyReport,
   type Hotspot,
   type Keyword,
@@ -146,7 +147,8 @@ function readInitialDailyRouteState() {
       activeTab: 'opportunities' as TabKey,
       reportId: '',
       source: '',
-      keyword: ''
+      keyword: '',
+      query: ''
     };
   }
 
@@ -156,7 +158,8 @@ function readInitialDailyRouteState() {
     activeTab: tab as TabKey,
     reportId: params.get('reportId') || '',
     source: params.get('source') || '',
-    keyword: params.get('keyword') || ''
+    keyword: params.get('keyword') || '',
+    query: params.get('query') || ''
   };
 }
 
@@ -3193,10 +3196,12 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
   const [dailyKeywords, setDailyKeywords] = useState<DailyKeyword[]>([]);
   const [dailyArticles, setDailyArticles] = useState<DailyArticle[]>([]);
   const [dailyHealth, setDailyHealth] = useState<DailyHealthStatus | null>(null);
+  const [dailyOverview, setDailyOverview] = useState<DailyOverviewSnapshot | null>(null);
   const [selectedDailyReport, setSelectedDailyReport] = useState<DailyReport | null>(null);
   const [selectedDailyReportId, setSelectedDailyReportId] = useState(initialDailyRouteState.reportId);
   const [selectedDailySource, setSelectedDailySource] = useState(initialDailyRouteState.source);
   const [selectedDailyKeyword, setSelectedDailyKeyword] = useState(initialDailyRouteState.keyword);
+  const [selectedDailySearchText, setSelectedDailySearchText] = useState(initialDailyRouteState.query);
   const [isDailyLoading, setIsDailyLoading] = useState(false);
   const [isDailyRunning, setIsDailyRunning] = useState(false);
   const [isPushingDailyFeishu, setIsPushingDailyFeishu] = useState(false);
@@ -3577,27 +3582,32 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
     reportId?: string;
     source?: string;
     keyword?: string;
+    searchText?: string;
   }) => {
     setIsDailyLoading(true);
     try {
       const source = params?.source ?? '';
       const keyword = params?.keyword ?? '';
+      const searchText = params?.searchText?.trim() ?? '';
       const requestedReportId = params?.reportId ?? '';
 
-      const [reportsData, keywordsData, healthData] = await Promise.all([
+      const [reportsData, keywordsData, healthData, overviewData] = await Promise.all([
         dailyApi.getReports({
           page: 1,
           limit: 30,
           source: source || undefined,
           keyword: keyword || undefined,
+          searchText: searchText || undefined,
         }),
         dailyApi.getKeywords(),
         dailyApi.getHealth(),
+        dailyApi.getOverview(),
       ]);
 
       setDailyReports(reportsData.data);
       setDailyKeywords(keywordsData);
       setDailyHealth(healthData);
+      setDailyOverview(overviewData.overview || healthData.overview || null);
       setIsDailyRunning(Boolean(healthData.queue.running));
 
       const availableReportIds = new Set(reportsData.data.map((item) => item.id));
@@ -3621,6 +3631,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
           reportId: nextReportId,
           source: source || undefined,
           keyword: keyword || undefined,
+          searchText: searchText || undefined,
           page: 1,
           limit: 100,
         }),
@@ -3642,8 +3653,9 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
       reportId: selectedDailyReportId || undefined,
       source: selectedDailySource || undefined,
       keyword: selectedDailyKeyword || undefined,
+      searchText: selectedDailySearchText || undefined,
     });
-  }, [activeTab, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource]);
+  }, [activeTab, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySearchText, selectedDailySource]);
 
   useEffect(() => {
     if (activeTab !== 'daily' || !dailyHealth?.queue.running) return;
@@ -3652,10 +3664,11 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
         reportId: selectedDailyReportId || undefined,
         source: selectedDailySource || undefined,
         keyword: selectedDailyKeyword || undefined,
+        searchText: selectedDailySearchText || undefined,
       });
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [activeTab, dailyHealth?.queue.running, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource]);
+  }, [activeTab, dailyHealth?.queue.running, loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySearchText, selectedDailySource]);
 
   const handleRunDailyReport = useCallback(async () => {
     setIsDailyRunning(true);
@@ -3666,6 +3679,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
         reportId: selectedDailyReportId || undefined,
         source: selectedDailySource || undefined,
         keyword: selectedDailyKeyword || undefined,
+        searchText: selectedDailySearchText || undefined,
       });
       if (result.accepted) {
         window.setTimeout(() => {
@@ -3673,6 +3687,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
             reportId: selectedDailyReportId || undefined,
             source: selectedDailySource || undefined,
             keyword: selectedDailyKeyword || undefined,
+            searchText: selectedDailySearchText || undefined,
           });
         }, 3000);
       }
@@ -3681,7 +3696,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
       showToast('触发 BIM 日报生成失败', 'error');
       setIsDailyRunning(false);
     }
-  }, [loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource, showToast]);
+  }, [loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySearchText, selectedDailySource, showToast]);
 
   const handlePushDailyReportFeishu = useCallback(async (reportId: string) => {
     setIsPushingDailyFeishu(true);
@@ -3699,6 +3714,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
         reportId: selectedDailyReportId || reportId,
         source: selectedDailySource || undefined,
         keyword: selectedDailyKeyword || undefined,
+        searchText: selectedDailySearchText || undefined,
       });
     } catch (error) {
       console.error('Failed to push BIM daily report to Feishu:', error);
@@ -3706,7 +3722,12 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
     } finally {
       setIsPushingDailyFeishu(false);
     }
-  }, [loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySource, showToast]);
+  }, [loadDailyData, selectedDailyKeyword, selectedDailyReportId, selectedDailySearchText, selectedDailySource, showToast]);
+
+  const handleOpenDailyOverviewItem = useCallback((reportId: string) => {
+    if (!reportId) return;
+    setSelectedDailyReportId(reportId);
+  }, []);
 
   const handleSearchFromNotification = useCallback((notification: Notification) => {
     const query = extractNotificationSearchText(notification);
@@ -4374,12 +4395,14 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
         {!selectedHotspot && activeTab === 'daily' && (
           <DailyReportTab
             themeMode={themeMode}
+            overview={dailyOverview}
             reports={dailyReports}
             selectedReport={selectedDailyReport}
             articles={dailyArticles}
             keywords={dailyKeywords}
             selectedSource={selectedDailySource}
             selectedKeyword={selectedDailyKeyword}
+            searchText={selectedDailySearchText}
             health={dailyHealth}
             isLoading={isDailyLoading}
             isRunning={isDailyRunning || Boolean(dailyHealth?.queue.running)}
@@ -4387,6 +4410,8 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
             onSelectReport={setSelectedDailyReportId}
             onSelectSource={setSelectedDailySource}
             onSelectKeyword={setSelectedDailyKeyword}
+            onSearchTextChange={setSelectedDailySearchText}
+            onOpenOverviewItem={handleOpenDailyOverviewItem}
             onRunReport={handleRunDailyReport}
             onPushFeishu={handlePushDailyReportFeishu}
           />

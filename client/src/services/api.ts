@@ -187,6 +187,35 @@ export interface DailyReport {
   createdAt: string;
 }
 
+export interface DailyOverviewItem {
+  key: string;
+  title: string;
+  summary: string;
+  reason: string;
+  importance: 'critical' | 'high' | 'watch';
+  status: 'new' | 'persistent' | 'watch';
+  reportIds: string[];
+  reportDateLabels: string[];
+  matchedKeywords: Array<{
+    label: string;
+    slug: string;
+  }>;
+  sourceNames: string[];
+  firstSeenDateLabel: string;
+  lastSeenDateLabel: string;
+  reportCount: number;
+  sourceCount: number;
+}
+
+export interface DailyOverviewSnapshot {
+  id: string;
+  scope: string;
+  title: string;
+  summary: string;
+  items: DailyOverviewItem[];
+  generatedAt: string;
+}
+
 export interface DailyHealthStatus {
   latestRun: {
     id: string;
@@ -199,6 +228,7 @@ export interface DailyHealthStatus {
     completedAt: string | null;
   } | null;
   latestReport: DailyReport | null;
+  overview: DailyOverviewSnapshot | null;
   sources: Array<{
     id: string;
     name: string;
@@ -637,11 +667,14 @@ export const healthApi = {
 export const dailyApi = {
   getToday: () => request<{ report: DailyReport | null; articles: DailyArticle[] }>('/daily/today'),
 
+  getOverview: () => request<{ overview: DailyOverviewSnapshot | null }>('/daily/overview'),
+
   getReports: (params?: {
     page?: number;
     limit?: number;
     source?: string;
     keyword?: string;
+    searchText?: string;
     dateFrom?: string;
     dateTo?: string;
   }) => {
@@ -665,6 +698,7 @@ export const dailyApi = {
     reportDate?: string;
     source?: string;
     keyword?: string;
+    searchText?: string;
   }) => {
     const searchParams = new URLSearchParams();
     if (params) {

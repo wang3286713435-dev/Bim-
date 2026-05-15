@@ -200,6 +200,7 @@ model DailyReport {
   articles         DailyArticle[]
   runs             DailyRun[]
   pushLogs         DailyReportPushLog[]
+  overviewSnapshot DailyOverviewSnapshot?
 }
 
 model DailyArticle {
@@ -260,6 +261,20 @@ model DailyRun {
 
   @@index([startedAt])
   @@index([status])
+}
+
+model DailyOverviewSnapshot {
+  id          String      @id @default(uuid())
+  scope       String      @default("primary")
+  reportId    String?     @unique
+  title       String
+  summary     String
+  itemsJson   String
+  generatedAt DateTime    @default(now())
+  createdAt   DateTime    @default(now())
+  report      DailyReport? @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([scope, generatedAt])
 }
 
 model DailyReportPushLog {
