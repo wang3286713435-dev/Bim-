@@ -23,6 +23,7 @@ type DailyReportMeta = {
 type DailyReportCardInput = {
   id: string;
   reportDate: string;
+  reportDateLabel?: string;
   title: string;
   intro: string;
   executiveSummary: string;
@@ -137,7 +138,7 @@ export function buildDailyReportFeishuCard(options: {
   reportUrl: string;
 }) {
   const { report, reportUrl } = options;
-  const dateLabel = formatReportDateLabel(report.reportDate);
+  const dateLabel = report.reportDateLabel || formatReportDateLabel(report.reportDate);
   const noNewItems = report.articleCount === 0;
 
   return {

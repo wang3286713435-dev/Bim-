@@ -15,6 +15,7 @@ describe('buildDailyReportFeishuCard', () => {
       report: {
         id: 'report-123',
         reportDate: '2026-05-15T00:00:00.000Z',
+        reportDateLabel: '2026-05-15',
         title: '2026年5月15日 BIM行业资讯日报',
         intro: '今日 BIM 资讯以政策更新和数字孪生实践为主。',
         executiveSummary: '政策标准与数字孪生落地是今天最值得管理层关注的两条主线。',
@@ -40,6 +41,7 @@ describe('buildDailyReportFeishuCard', () => {
     });
 
     expect(card.msg_type).toBe('interactive');
+    expect(JSON.stringify(card)).toContain('BIM 日报 | 2026-05-15');
     expect(JSON.stringify(card)).toContain('管理层摘要');
     expect(JSON.stringify(card)).toContain('今日重点 1');
     expect(JSON.stringify(card)).toContain('建议跟踪 1');
@@ -52,6 +54,7 @@ describe('buildDailyReportFeishuCard', () => {
       report: {
         id: 'report-empty',
         reportDate: '2026-05-16T00:00:00.000Z',
+        reportDateLabel: '2026-05-16',
         title: '2026年5月16日 BIM行业资讯日报',
         intro: '今日暂无值得纳入管理层日报的新资讯。',
         executiveSummary: '今日候选池未形成高价值资讯，建议继续观察。',
@@ -74,6 +77,36 @@ describe('buildDailyReportFeishuCard', () => {
 
     expect(JSON.stringify(card)).toContain('今日无新增');
     expect(JSON.stringify(card)).toContain('继续观察');
+  });
+
+  it('uses reportDateLabel instead of UTC-sliced reportDate in the card header', () => {
+    const card = buildDailyReportFeishuCard({
+      report: {
+        id: 'report-tz',
+        reportDate: '2026-05-14T16:00:00.000Z',
+        reportDateLabel: '2026-05-15',
+        title: '2026年5月15日 BIM行业资讯日报',
+        intro: '北京时间应显示 05-15。',
+        executiveSummary: '这是一个时区口径测试。',
+        highlights: ['标题日期应和正文日期一致。'],
+        recommendedActions: [],
+        sourceCount: 1,
+        articleCount: 1,
+        generatedAt: '2026-05-15T01:00:00.000Z',
+        meta: {
+          candidateArticleCount: 1,
+          selectedArticleCount: 1,
+          freshArticleCount: 1,
+          supplementalArticleCount: 0,
+          sourceCount: 1
+        },
+        keywordStats: []
+      },
+      reportUrl: 'https://tender.zhuoyusmart.top/?tab=daily&reportId=report-tz'
+    });
+
+    expect(JSON.stringify(card)).toContain('BIM 日报 | 2026-05-15');
+    expect(JSON.stringify(card)).not.toContain('BIM 日报 | 2026-05-14');
   });
 });
 
