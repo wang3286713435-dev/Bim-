@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Reorder } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyOverviewSnapshot, DailyReport } from '../services/api';
@@ -154,12 +154,6 @@ function getOverviewTone(importance: 'critical' | 'high' | 'watch', isLight: boo
     : 'border-white/10 bg-white/[0.04] text-slate-200';
 }
 
-function getOverviewStatusLabel(status: 'new' | 'persistent' | 'watch') {
-  if (status === 'persistent') return '持续关注';
-  if (status === 'new') return '最新焦点';
-  return '观察信号';
-}
-
 export default function DailyReportTab({
   themeMode,
   overview,
@@ -190,7 +184,9 @@ export default function DailyReportTab({
   const [showAppendix, setShowAppendix] = useState(false);
   const overviewItems = useMemo(() => filterOverviewItems(overview, selectedKeyword, searchText), [overview, selectedKeyword, searchText]);
   const [overviewOrder, setOverviewOrder] = useState<string[]>([]);
+  const [draggingOverviewKey, setDraggingOverviewKey] = useState<string | null>(null);
   const overviewOrderRef = useRef<string[]>([]);
+  const draggingOverviewKeyRef = useRef<string | null>(null);
   const criticalOverviewItems = overviewItems.filter((item) => item.importance === 'critical' || item.status === 'persistent');
 
   useEffect(() => {
@@ -218,12 +214,26 @@ export default function DailyReportTab({
       ...overviewItems.filter((item) => !orderedKeySet.has(item.key))
     ];
   }, [overviewItems, overviewOrder]);
-  const overviewReorderValues = useMemo(() => orderedOverviewItems.map((item) => item.key), [orderedOverviewItems]);
-
-  const handleReorderOverview = useCallback((nextOrder: string[]) => {
+  const updateOverviewOrder = useCallback((nextOrder: string[]) => {
     overviewOrderRef.current = nextOrder;
     setOverviewOrder(nextOrder);
   }, []);
+
+  const handleOverviewDragEnter = useCallback((targetKey: string) => {
+    const draggedKey = draggingOverviewKeyRef.current;
+    if (!draggedKey || draggedKey === targetKey) return;
+    const currentOrder = overviewOrderRef.current.length > 0
+      ? overviewOrderRef.current
+      : orderedOverviewItems.map((item) => item.key);
+    const fromIndex = currentOrder.indexOf(draggedKey);
+    const toIndex = currentOrder.indexOf(targetKey);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const nextOrder = [...currentOrder];
+    nextOrder.splice(fromIndex, 1);
+    nextOrder.splice(toIndex, 0, draggedKey);
+    updateOverviewOrder(nextOrder);
+  }, [orderedOverviewItems, updateOverviewOrder]);
 
   const persistOverviewOrder = useCallback(() => {
     const order = overviewOrderRef.current;
@@ -233,6 +243,16 @@ export default function DailyReportTab({
       manualOrder: index
     })));
   }, [onUpdateOverviewPreferences]);
+
+  const finishOverviewDrag = useCallback(() => {
+    if (!draggingOverviewKeyRef.current) {
+      setDraggingOverviewKey(null);
+      return;
+    }
+    draggingOverviewKeyRef.current = null;
+    setDraggingOverviewKey(null);
+    persistOverviewOrder();
+  }, [persistOverviewOrder]);
 
   return (
     <div className="space-y-6">
@@ -271,55 +291,63 @@ export default function DailyReportTab({
         </div>
 
         <div className="mt-5 space-y-4">
-            <Reorder.Group
-              axis="y"
-              values={overviewReorderValues}
-              onReorder={handleReorderOverview}
-              className="grid list-none gap-3 lg:grid-cols-2 xl:grid-cols-3"
-            >
+            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
               {orderedOverviewItems.map((item) => {
                 const tone = getOverviewTone(item.importance, isLight);
                 return (
-                  <Reorder.Item
+                  <motion.div
+                    layout
                     key={item.key}
-                    value={item.key}
-                    onDragEnd={persistOverviewOrder}
-                    whileDrag={{
-                      scale: 1.015,
-                      zIndex: 30,
-                      boxShadow: isLight ? '0 24px 60px rgba(15, 23, 42, 0.18)' : '0 24px 60px rgba(0, 0, 0, 0.34)'
+                    draggable
+                    onDragStartCapture={(event) => {
+                      draggingOverviewKeyRef.current = item.key;
+                      setDraggingOverviewKey(item.key);
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', item.key);
+                    }}
+                    onDragEnterCapture={() => handleOverviewDragEnter(item.key)}
+                    onDragOverCapture={(event) => event.preventDefault()}
+                    onDropCapture={(event) => {
+                      event.preventDefault();
+                      finishOverviewDrag();
+                    }}
+                    onDragEndCapture={finishOverviewDrag}
+                    whileHover={{ y: -2 }}
+                    animate={{
+                      scale: draggingOverviewKey === item.key ? 1.015 : 1,
+                      opacity: draggingOverviewKey === item.key ? 0.72 : 1
                     }}
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                     className={cn(
-                      'list-none cursor-grab rounded-xl border p-3 active:cursor-grabbing',
+                      'cursor-grab rounded-xl border p-3 active:cursor-grabbing',
+                      draggingOverviewKey === item.key && 'ring-2 ring-cyan-300/35',
                       tone
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] opacity-75">
-                            <GripVertical className="h-3 w-3" />
-                            拖动
-                          </span>
-                          <span className="rounded-full border px-2 py-0.5 text-[10px]">
-                            {item.importance === 'critical' ? '高优先' : item.importance === 'high' ? '重点' : '观察'}
-                          </span>
-                          <span className="text-[10px] opacity-75">{item.reportCount} 期</span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
+                    <div className="flex items-start gap-2">
+                      <span
                         className={cn(
-                          'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
-                          item.pinned
-                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
-                            : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
+                          'mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
+                          isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-white/10 bg-white/[0.06] text-slate-300'
                         )}
+                        title="拖动排序"
                       >
-                        <Pin className="h-3 w-3" />
-                        {item.pinned ? '已钉住' : '钉住'}
-                      </button>
+                        <GripVertical className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                        {item.matchedKeywords.slice(0, 4).map((keyword) => (
+                          <button
+                            key={`${item.key}-${keyword.slug}`}
+                            onClick={() => onSelectKeyword(keyword.slug)}
+                            className={cn(
+                              'rounded-full border px-2 py-0.5 text-[10px] transition',
+                              isLight ? 'border-cyan-100 bg-cyan-50 text-cyan-800 hover:border-cyan-200' : 'border-cyan-300/20 bg-cyan-500/10 text-cyan-100 hover:border-cyan-300/35'
+                            )}
+                          >
+                            {keyword.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-6">
                       {renderHighlightedByTerms(item.title, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
@@ -330,19 +358,19 @@ export default function DailyReportTab({
                     <p className="mt-2 line-clamp-2 text-[11px] leading-5 opacity-75">
                       {renderHighlightedByTerms(item.reason, highlightTerms, isLight ? 'bg-amber-200 text-slate-900' : 'bg-amber-300/30 text-white')}
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {item.matchedKeywords.slice(0, 3).map((keyword) => (
-                        <button
-                          key={`${item.key}-${keyword.slug}`}
-                          onClick={() => onSelectKeyword(keyword.slug)}
-                          className={cn('rounded-full border px-2 py-0.5 text-[10px] transition', isLight ? 'border-white/70 bg-white text-slate-700 hover:border-cyan-200' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-cyan-300/30')}
-                        >
-                          {keyword.label}
-                        </button>
-                      ))}
-                    </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <span className="text-[11px] opacity-75">{item.pinned ? '人工钉住' : getOverviewStatusLabel(item.status)}</span>
+                      <button
+                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition',
+                          item.pinned
+                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
+                            : (isLight ? 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
+                        )}
+                      >
+                        <Pin className="h-3 w-3" />
+                        {item.pinned ? '已钉住' : '钉住'}
+                      </button>
                       <button
                         onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
                         className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
@@ -351,7 +379,7 @@ export default function DailyReportTab({
                         <ExternalLink className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                  </Reorder.Item>
+                  </motion.div>
                 );
               })}
               {overviewItems.length === 0 && (
@@ -359,7 +387,7 @@ export default function DailyReportTab({
                   当前搜索条件下没有命中的总览重点，可以换一个关键词，或先查看完整日报历史。
                 </div>
               )}
-            </Reorder.Group>
+            </div>
         </div>
       </section>
 
