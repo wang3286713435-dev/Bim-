@@ -5,6 +5,7 @@ import { formatDailyReportDateLabel, toDailyReportDate } from './dailyReportDate
 import { buildKeywordHitPreview, matchDailyKeywords, type DailyKeywordHit } from './dailyKeywordMatcher.js';
 import {
   applyEditorialSelection,
+  applyOverviewPreferences,
   buildFallbackOverviewSnapshot,
   buildDailyReportDraft,
   selectEditorialDailyArticles,
@@ -429,6 +430,30 @@ function serializeStoredOverviewSnapshot(snapshot: {
   };
 }
 
+async function listOverviewPreferences() {
+  return prisma.dailyOverviewPreference.findMany({
+    orderBy: [
+      { manualOrder: 'asc' },
+      { updatedAt: 'desc' }
+    ]
+  });
+}
+
+function applyPreferencesToStoredSnapshot(
+  snapshot: DailyOverviewSnapshot,
+  preferences: Array<{ key: string; pinned: boolean; manualOrder: number | null }>
+): DailyOverviewSnapshot {
+  return applyOverviewPreferences({
+    snapshot,
+    previousItems: snapshot.items,
+    preferences: preferences.map((item) => ({
+      key: item.key,
+      pinned: item.pinned,
+      manualOrder: item.manualOrder
+    }))
+  });
+}
+
 async function buildDailyOverviewSnapshotWithAI(params: {
   reportDateLabel: string;
   recentReports: DailyOverviewReportInput[];
@@ -689,10 +714,20 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
     const previousOverviewItems = previousOverviewSnapshot
       ? serializeStoredOverviewSnapshot(previousOverviewSnapshot).items
       : [];
+    const overviewPreferences = await listOverviewPreferences();
     const overviewDraft = await buildDailyOverviewSnapshotWithAI({
       reportDateLabel: formatDailyReportDateLabel(reportDate),
       recentReports: recentReports.map((item) => toOverviewReportInput(serializeDailyReportShape(item))),
       previousItems: previousOverviewItems
+    });
+    const overviewWithPreferences = applyOverviewPreferences({
+      snapshot: overviewDraft,
+      previousItems: previousOverviewItems,
+      preferences: overviewPreferences.map((item) => ({
+        key: item.key,
+        pinned: item.pinned,
+        manualOrder: item.manualOrder
+      }))
     });
     await prisma.dailyOverviewSnapshot.upsert({
       where: {
@@ -700,17 +735,17 @@ export async function generateDailyReport(triggerType: 'manual' | 'scheduled' = 
       },
       update: {
         scope: 'primary',
-        title: overviewDraft.title,
-        summary: overviewDraft.summary,
-        itemsJson: JSON.stringify(overviewDraft),
+        title: overviewWithPreferences.title,
+        summary: overviewWithPreferences.summary,
+        itemsJson: JSON.stringify(overviewWithPreferences),
         generatedAt: new Date()
       },
       create: {
         reportId: completeReport.id,
         scope: 'primary',
-        title: overviewDraft.title,
-        summary: overviewDraft.summary,
-        itemsJson: JSON.stringify(overviewDraft),
+        title: overviewWithPreferences.title,
+        summary: overviewWithPreferences.summary,
+        itemsJson: JSON.stringify(overviewWithPreferences),
         generatedAt: new Date()
       }
     });
@@ -866,6 +901,7 @@ export async function getLatestDailyOverview() {
   const snapshot = await prisma.dailyOverviewSnapshot.findFirst({
     orderBy: { generatedAt: 'desc' }
   });
+  const preferences = await listOverviewPreferences();
 
   if (!snapshot) {
     const recentReports = await prisma.dailyReport.findMany({
@@ -880,16 +916,59 @@ export async function getLatestDailyOverview() {
       recentReports: serialized.map((item) => toOverviewReportInput(item)),
       previousItems: []
     });
+    const withPreferences = applyPreferencesToStoredSnapshot(fallback, preferences);
     return {
       id: 'daily-overview-fallback',
       scope: 'primary',
-      title: fallback.title,
-      summary: fallback.summary,
-      items: fallback.items,
+      title: withPreferences.title,
+      summary: withPreferences.summary,
+      items: withPreferences.items,
       generatedAt: serialized[0]?.generatedAt || new Date().toISOString()
     };
   }
-  return serializeStoredOverviewSnapshot(snapshot);
+  const serialized = serializeStoredOverviewSnapshot(snapshot);
+  const withPreferences = applyPreferencesToStoredSnapshot({
+    title: serialized.title,
+    summary: serialized.summary,
+    items: serialized.items
+  }, preferences);
+  return {
+    ...serialized,
+    title: withPreferences.title,
+    summary: withPreferences.summary,
+    items: withPreferences.items
+  };
+}
+
+export async function updateDailyOverviewPreferences(input: Array<{
+  key: string;
+  pinned?: boolean;
+  manualOrder?: number | null;
+}>) {
+  const sanitized = input
+    .map((item) => ({
+      key: item.key.trim(),
+      pinned: item.pinned,
+      manualOrder: item.manualOrder
+    }))
+    .filter((item) => item.key);
+
+  for (const item of sanitized) {
+    await prisma.dailyOverviewPreference.upsert({
+      where: { key: item.key },
+      update: {
+        ...(typeof item.pinned === 'boolean' ? { pinned: item.pinned } : {}),
+        ...(item.manualOrder !== undefined ? { manualOrder: item.manualOrder } : {}),
+      },
+      create: {
+        key: item.key,
+        pinned: item.pinned ?? false,
+        manualOrder: item.manualOrder ?? null,
+      }
+    });
+  }
+
+  return getLatestDailyOverview();
 }
 
 export async function getLatestDailyReportRecord() {

@@ -277,6 +277,18 @@ model DailyOverviewSnapshot {
   @@index([scope, generatedAt])
 }
 
+model DailyOverviewPreference {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  pinned      Boolean  @default(false)
+  manualOrder Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([pinned])
+  @@index([manualOrder])
+}
+
 model DailyReportPushLog {
   id            String      @id @default(uuid())
   reportId      String

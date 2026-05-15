@@ -194,6 +194,9 @@ export interface DailyOverviewItem {
   reason: string;
   importance: 'critical' | 'high' | 'watch';
   status: 'new' | 'persistent' | 'watch';
+  pinned?: boolean;
+  manualOrder?: number | null;
+  linkedReportId?: string | null;
   reportIds: string[];
   reportDateLabels: string[];
   matchedKeywords: Array<{
@@ -668,6 +671,12 @@ export const dailyApi = {
   getToday: () => request<{ report: DailyReport | null; articles: DailyArticle[] }>('/daily/today'),
 
   getOverview: () => request<{ overview: DailyOverviewSnapshot | null }>('/daily/overview'),
+
+  updateOverviewPreferences: (items: Array<{ key: string; pinned?: boolean; manualOrder?: number | null }>) =>
+    request<{ overview: DailyOverviewSnapshot | null }>('/daily/overview/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ items })
+    }),
 
   getReports: (params?: {
     page?: number;

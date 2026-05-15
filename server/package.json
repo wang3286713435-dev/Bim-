@@ -1,6 +1,6 @@
 {
   "name": "yupi-hot-monitor-server",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

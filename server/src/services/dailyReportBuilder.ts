@@ -76,6 +76,9 @@ export type DailyOverviewItem = {
   reason: string;
   importance: 'critical' | 'high' | 'watch';
   status: 'new' | 'persistent' | 'watch';
+  pinned?: boolean;
+  manualOrder?: number | null;
+  linkedReportId?: string | null;
   reportIds: string[];
   reportDateLabels: string[];
   matchedKeywords: DailyOverviewKeywordRef[];
@@ -101,6 +104,12 @@ export type DailyOverviewReportInput = {
     title: DailySectionTitle;
     items: DailyArticleDraft[];
   }>;
+};
+
+export type DailyOverviewPreferenceInput = {
+  key: string;
+  pinned?: boolean;
+  manualOrder?: number | null;
 };
 
 const SECTION_ORDER: DailySectionTitle[] = [
@@ -546,6 +555,7 @@ export function buildFallbackOverviewSnapshot(params: {
         sourceNames: [...aggregate.sourceNames],
         firstSeenDateLabel: [...aggregate.reportDateLabels].sort()[0] || reportDateLabel,
         lastSeenDateLabel: [...aggregate.reportDateLabels].sort().slice(-1)[0] || reportDateLabel,
+        linkedReportId: aggregate.latestReportId,
         reportCount,
         sourceCount
       };
@@ -565,6 +575,68 @@ export function buildFallbackOverviewSnapshot(params: {
   return {
     title: `${reportDateLabel} BIM 日报总览`,
     summary: buildOverviewSummary(persistentCount, freshCount, items.length),
+    items
+  };
+}
+
+function sortOverviewItems(items: DailyOverviewItem[]): DailyOverviewItem[] {
+  return [...items].sort((left, right) => {
+    const leftOrder = typeof left.manualOrder === 'number' ? left.manualOrder : Number.POSITIVE_INFINITY;
+    const rightOrder = typeof right.manualOrder === 'number' ? right.manualOrder : Number.POSITIVE_INFINITY;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    const leftRank = left.importance === 'critical' ? 3 : left.importance === 'high' ? 2 : 1;
+    const rightRank = right.importance === 'critical' ? 3 : right.importance === 'high' ? 2 : 1;
+    if (rightRank !== leftRank) return rightRank - leftRank;
+    if (right.reportCount !== left.reportCount) return right.reportCount - left.reportCount;
+    return right.lastSeenDateLabel.localeCompare(left.lastSeenDateLabel, 'zh-Hans-CN');
+  });
+}
+
+export function applyOverviewPreferences(params: {
+  snapshot: DailyOverviewSnapshot;
+  previousItems?: DailyOverviewItem[];
+  preferences?: DailyOverviewPreferenceInput[];
+  limit?: number;
+}): DailyOverviewSnapshot {
+  const { snapshot, previousItems = [], preferences = [], limit = 6 } = params;
+  const preferenceByKey = new Map(preferences.map((item) => [item.key, item]));
+  const nextItemsByKey = new Map<string, DailyOverviewItem>();
+
+  for (const item of snapshot.items) {
+    const preference = preferenceByKey.get(item.key);
+    nextItemsByKey.set(item.key, {
+      ...item,
+      pinned: preference?.pinned ?? item.pinned ?? false,
+      manualOrder: preference?.manualOrder ?? item.manualOrder ?? null,
+      linkedReportId: item.linkedReportId || item.reportIds[0] || null
+    });
+  }
+
+  for (const previousItem of previousItems) {
+    const preference = preferenceByKey.get(previousItem.key);
+    const shouldKeep = Boolean(preference?.pinned || previousItem.pinned);
+    if (!shouldKeep || nextItemsByKey.has(previousItem.key)) continue;
+    nextItemsByKey.set(previousItem.key, {
+      ...previousItem,
+      pinned: true,
+      manualOrder: preference?.manualOrder ?? previousItem.manualOrder ?? null,
+      status: 'persistent',
+      linkedReportId: previousItem.linkedReportId || previousItem.reportIds[0] || null,
+      reason: previousItem.reason || '已人工钉住，继续保留在总览中供管理层跟进。'
+    });
+  }
+
+  const sorted = sortOverviewItems([...nextItemsByKey.values()]);
+  const pinned = sorted.filter((item) => item.pinned);
+  const unpinned = sorted.filter((item) => !item.pinned).slice(0, Math.max(0, limit - pinned.length));
+  const items = sortOverviewItems([...pinned, ...unpinned]);
+
+  const pinnedCount = items.filter((item) => item.pinned).length;
+  return {
+    ...snapshot,
+    summary: pinnedCount > 0
+      ? `${snapshot.summary} 已人工钉住 ${pinnedCount} 条重点，后续日报更新时会继续保留。`
+      : snapshot.summary,
     items
   };
 }

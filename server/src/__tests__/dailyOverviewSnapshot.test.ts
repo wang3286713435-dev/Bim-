@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyOverviewPreferences,
   buildFallbackOverviewSnapshot,
   type DailyOverviewItem,
   type DailyOverviewReportInput,
@@ -143,5 +144,34 @@ describe('buildFallbackOverviewSnapshot', () => {
       expect.objectContaining({ slug: 'bim' }),
     ]));
     expect(snapshot.items.some((item) => item.title.includes('数字孪生'))).toBe(true);
+  });
+});
+
+describe('applyOverviewPreferences', () => {
+  it('keeps pinned previous items even when the latest agent snapshot omits them and applies shared order', () => {
+    const snapshot = buildFallbackOverviewSnapshot({
+      reportDateLabel: '2026-05-15',
+      recentReports: [recentReports[0]],
+    });
+
+    const merged = applyOverviewPreferences({
+      snapshot,
+      previousItems: previousOverview,
+      preferences: [
+        { key: 'legacy-guide', pinned: true, manualOrder: 1 },
+        { key: snapshot.items[0]!.key, pinned: false, manualOrder: 0 },
+      ],
+    });
+
+    expect(merged.items.map((item) => item.key)).toEqual([
+      snapshot.items[0]!.key,
+      'legacy-guide',
+    ]);
+    expect(merged.items[1]).toEqual(expect.objectContaining({
+      key: 'legacy-guide',
+      pinned: true,
+      status: 'persistent',
+      manualOrder: 1,
+    }));
   });
 });

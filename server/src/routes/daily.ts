@@ -9,7 +9,8 @@ import {
   getLatestDailyReportRecord,
   listDailyKeywords,
   serializeDailyArticle,
-  serializeDailyReportShape
+  serializeDailyReportShape,
+  updateDailyOverviewPreferences
 } from '../services/dailyReports.js';
 import { getLatestDailyReportPushLog, listRecentDailyReportPushLogs, pushDailyReportToFeishu } from '../services/dailyReportFeishu.js';
 
@@ -67,6 +68,25 @@ router.get('/overview', async (_req, res) => {
   } catch (error) {
     console.error('Error fetching daily report overview:', error);
     res.status(500).json({ error: 'Failed to fetch daily report overview' });
+  }
+});
+
+router.patch('/overview/preferences', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const overview = await updateDailyOverviewPreferences(items.map((item: Record<string, unknown>) => ({
+      key: typeof item.key === 'string' ? item.key : '',
+      pinned: typeof item.pinned === 'boolean' ? item.pinned : undefined,
+      manualOrder: typeof item.manualOrder === 'number' && Number.isFinite(item.manualOrder)
+        ? item.manualOrder
+        : item.manualOrder === null
+          ? null
+          : undefined
+    })));
+    res.json({ overview });
+  } catch (error) {
+    console.error('Error updating daily report overview preferences:', error);
+    res.status(500).json({ error: 'Failed to update daily report overview preferences' });
   }
 });
 

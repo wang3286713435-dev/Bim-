@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar } from 'lucide-react';
+import { ExternalLink, FileStack, RefreshCw, Sparkles, Newspaper, Clock3, Filter, ChevronDown, Search, Pin, Radar, GripVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { DailyArticle, DailyHealthStatus, DailyKeyword, DailyOverviewSnapshot, DailyReport } from '../services/api';
 import { formatDateTime, relativeTime } from '../utils/relativeTime';
@@ -25,6 +25,7 @@ type DailyReportTabProps = {
   onSelectKeyword: (keywordSlug: string) => void;
   onSearchTextChange: (searchText: string) => void;
   onOpenOverviewItem: (reportId: string) => void;
+  onUpdateOverviewPreferences: (items: Array<{ key: string; pinned?: boolean; manualOrder?: number | null }>) => Promise<void>;
   onRunReport: () => Promise<void>;
   onPushFeishu: (reportId: string) => Promise<void>;
 };
@@ -139,16 +140,16 @@ function getRecencyMeta(bucket: 'today' | 'recent' | 'watch' | undefined, isLigh
 function getOverviewTone(importance: 'critical' | 'high' | 'watch', isLight: boolean) {
   if (importance === 'critical') {
     return isLight
-      ? 'border-rose-200 bg-rose-50 text-rose-700'
-      : 'border-rose-300/25 bg-rose-500/12 text-rose-100';
+      ? 'border-sky-200 bg-sky-50 text-slate-800 shadow-[0_12px_30px_rgba(14,165,233,0.10)]'
+      : 'border-sky-300/25 bg-sky-500/10 text-sky-50';
   }
   if (importance === 'high') {
     return isLight
-      ? 'border-cyan-200 bg-cyan-50 text-cyan-800'
-      : 'border-cyan-300/25 bg-cyan-500/12 text-cyan-100';
+      ? 'border-blue-100 bg-white text-slate-800 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+      : 'border-cyan-300/20 bg-white/[0.055] text-slate-100';
   }
   return isLight
-    ? 'border-slate-200 bg-slate-50 text-slate-700'
+    ? 'border-slate-200 bg-white text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)]'
     : 'border-white/10 bg-white/[0.04] text-slate-200';
 }
 
@@ -177,6 +178,7 @@ export default function DailyReportTab({
   onSelectKeyword,
   onSearchTextChange,
   onOpenOverviewItem,
+  onUpdateOverviewPreferences,
   onRunReport,
   onPushFeishu
 }: DailyReportTabProps) {
@@ -185,8 +187,24 @@ export default function DailyReportTab({
   const sections = useMemo(() => filterSections(selectedReport, selectedSource, selectedKeyword, searchText), [selectedReport, selectedSource, selectedKeyword, searchText]);
   const sourceOptions = health?.sources || [];
   const [showAppendix, setShowAppendix] = useState(false);
+  const [draggedOverviewKey, setDraggedOverviewKey] = useState<string | null>(null);
   const overviewItems = useMemo(() => filterOverviewItems(overview, selectedKeyword, searchText), [overview, selectedKeyword, searchText]);
   const criticalOverviewItems = overviewItems.filter((item) => item.importance === 'critical' || item.status === 'persistent');
+
+  const handleDropOverviewItem = async (targetKey: string) => {
+    if (!draggedOverviewKey || draggedOverviewKey === targetKey) return;
+    const fromIndex = overviewItems.findIndex((item) => item.key === draggedOverviewKey);
+    const toIndex = overviewItems.findIndex((item) => item.key === targetKey);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const reordered = [...overviewItems];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    setDraggedOverviewKey(null);
+    await onUpdateOverviewPreferences(reordered.map((item, index) => ({
+      key: item.key,
+      manualOrder: index
+    })));
+  };
 
   return (
     <div className="space-y-6">
@@ -202,7 +220,7 @@ export default function DailyReportTab({
             </div>
             <div>
               <h2 className={cn('text-3xl font-semibold tracking-tight', isLight ? 'text-slate-900' : 'text-white')}>
-                {overview?.title || 'BIM 日报总览正在准备中'}
+                BIM 日报总览
               </h2>
               <p className={cn('mt-3 max-w-4xl text-sm leading-7', isLight ? 'text-slate-600' : 'text-slate-300')}>
                 {overview?.summary || '这里会由 agent 从多期日报中提炼最重要、最需要持续保留的 BIM 关键信号。'}
@@ -210,7 +228,7 @@ export default function DailyReportTab({
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className={cn('rounded-2xl border px-4 py-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
               <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">持续重点</div>
               <div className="mt-2 text-2xl font-semibold">{criticalOverviewItems.length}</div>
@@ -221,38 +239,35 @@ export default function DailyReportTab({
               <div className="mt-2 text-2xl font-semibold">{overviewItems.length}</div>
               <div className="mt-1 text-xs text-slate-500">已按时效性与重要程度重新排序</div>
             </div>
-            <div className={cn('rounded-2xl border px-4 py-3 text-sm', isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200')}>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">最近刷新</div>
-              <div className="mt-2 text-sm font-medium">{overview?.generatedAt ? relativeTime(overview.generatedAt) : '暂无'}</div>
-              <div className="mt-1 text-xs text-slate-500">{overview?.generatedAt ? formatDateTime(overview.generatedAt) : '等待日报生成'}</div>
-            </div>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="space-y-4">
-            <label className={cn(
-              'flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm shadow-sm',
-              isLight ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
-            )}>
-              <Search className="h-4 w-4 text-cyan-300" />
-              <input
-                value={searchText}
-                onChange={(event) => onSearchTextChange(event.target.value)}
-                placeholder="搜索 BIM / 数字孪生 / Revit，查找相关日报与总览重点…"
-                className={cn('w-full bg-transparent text-sm outline-none placeholder:text-slate-400', isLight ? 'text-slate-900' : 'text-white')}
-              />
-            </label>
-
+        <div className="mt-5 space-y-4">
             <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
               {overviewItems.map((item) => {
                 const tone = getOverviewTone(item.importance, isLight);
                 return (
-                  <div key={item.key} className={cn('rounded-[22px] border p-4', tone)}>
+                  <div
+                    key={item.key}
+                    draggable
+                    onDragStart={() => setDraggedOverviewKey(item.key)}
+                    onDragEnd={() => setDraggedOverviewKey(null)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => void handleDropOverviewItem(item.key)}
+                    className={cn(
+                      'cursor-grab rounded-xl border p-4 active:cursor-grabbing',
+                      draggedOverviewKey === item.key && 'opacity-50 ring-2 ring-cyan-300/40',
+                      tone
+                    )}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] opacity-75">
+                        <GripVertical className="h-3 w-3" />
+                        拖动
+                      </span>
                       <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]">
                         <Pin className="h-3 w-3" />
-                        {getOverviewStatusLabel(item.status)}
+                        {item.pinned ? '已钉住' : getOverviewStatusLabel(item.status)}
                       </span>
                       <span className="rounded-full border px-2.5 py-1 text-[11px]">
                         {item.importance === 'critical' ? '高优先' : item.importance === 'high' ? '重点' : '观察'}
@@ -279,12 +294,21 @@ export default function DailyReportTab({
                         </button>
                       ))}
                     </div>
-                    <div className="mt-4 flex items-center justify-between gap-3 text-xs opacity-80">
-                      <div>
-                        首次 {item.firstSeenDateLabel}<br />最近 {item.lastSeenDateLabel}
-                      </div>
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs">
                       <button
-                        onClick={() => onOpenOverviewItem(item.reportIds[0] || '')}
+                        onClick={() => void onUpdateOverviewPreferences([{ key: item.key, pinned: !item.pinned }])}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-medium transition',
+                          item.pinned
+                            ? (isLight ? 'border-sky-200 bg-sky-100 text-sky-800' : 'border-sky-300/30 bg-sky-500/15 text-sky-100')
+                            : (isLight ? 'border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:text-sky-800' : 'border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-300/30')
+                        )}
+                      >
+                        <Pin className="h-3.5 w-3.5" />
+                        {item.pinned ? '取消钉住' : '钉住'}
+                      </button>
+                      <button
+                        onClick={() => onOpenOverviewItem(item.linkedReportId || item.reportIds[0] || '')}
                         className={cn('inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-medium transition', isLight ? 'border-white/80 bg-white text-slate-700 hover:text-cyan-700' : 'border-white/10 bg-white/[0.08] text-slate-50 hover:text-cyan-100')}
                       >
                         打开关联日报
@@ -300,33 +324,18 @@ export default function DailyReportTab({
                 </div>
               )}
             </div>
-          </div>
-
-          <div className={cn('rounded-[24px] border p-4', isLight ? 'border-slate-200 bg-slate-50' : 'border-white/10 bg-white/[0.04]')}>
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-amber-300" />
-              <h3 className={cn('text-base font-semibold', isLight ? 'text-slate-900' : 'text-white')}>搜索结果摘要</h3>
-            </div>
-            <p className={cn('mt-2 text-sm leading-6', isLight ? 'text-slate-600' : 'text-slate-300')}>
-              {searchText.trim()
-                ? `当前按“${searchText.trim()}”筛出 ${reports.length} 期相关日报，便于快速回看该主题在不同日期里的变化。`
-                : '在这里输入关键词，我们会从日报标题、管理层摘要、原始资讯与命中关键词里找出相关日报。'}
-            </p>
-            <div className="mt-4 space-y-3 text-sm">
-              <div className={cn('rounded-2xl border px-4 py-3', isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/[0.05] text-slate-200')}>
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">相关日报</div>
-                <div className="mt-2 text-2xl font-semibold">{reports.length}</div>
-              </div>
-              <div className={cn('rounded-2xl border px-4 py-3', isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/[0.05] text-slate-200')}>
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">重点总览命中</div>
-                <div className="mt-2 text-2xl font-semibold">{overviewItems.length}</div>
-              </div>
-              <div className={cn('rounded-2xl border px-4 py-3', isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/[0.05] text-slate-200')}>
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">当前附录条目</div>
-                <div className="mt-2 text-2xl font-semibold">{articles.length}</div>
-              </div>
-            </div>
-          </div>
+          <label className={cn(
+            'flex items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-sm',
+            isLight ? 'border-slate-200 bg-white text-slate-700' : 'border-white/10 bg-white/[0.04] text-slate-200'
+          )}>
+            <Search className="h-4 w-4 text-cyan-300" />
+            <input
+              value={searchText}
+              onChange={(event) => onSearchTextChange(event.target.value)}
+              placeholder="搜索 BIM / 数字孪生 / Revit，查找相关日报…"
+              className={cn('w-full bg-transparent text-sm outline-none placeholder:text-slate-400', isLight ? 'text-slate-900' : 'text-white')}
+            />
+          </label>
         </div>
       </section>
 

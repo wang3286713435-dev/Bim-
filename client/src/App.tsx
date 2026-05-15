@@ -3727,7 +3727,20 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
   const handleOpenDailyOverviewItem = useCallback((reportId: string) => {
     if (!reportId) return;
     setSelectedDailyReportId(reportId);
+    window.setTimeout(() => {
+      document.getElementById('daily-report-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
   }, []);
+
+  const handleUpdateDailyOverviewPreferences = useCallback(async (items: Array<{ key: string; pinned?: boolean; manualOrder?: number | null }>) => {
+    try {
+      const result = await dailyApi.updateOverviewPreferences(items);
+      setDailyOverview(result.overview);
+    } catch (error) {
+      console.error('Failed to update BIM daily overview preferences:', error);
+      showToast('总览卡片更新失败', 'error');
+    }
+  }, [showToast]);
 
   const handleSearchFromNotification = useCallback((notification: Notification) => {
     const query = extractNotificationSearchText(notification);
@@ -4412,6 +4425,7 @@ function DashboardApp({ authUser, onLogout }: DashboardAppProps) {
             onSelectKeyword={setSelectedDailyKeyword}
             onSearchTextChange={setSelectedDailySearchText}
             onOpenOverviewItem={handleOpenDailyOverviewItem}
+            onUpdateOverviewPreferences={handleUpdateDailyOverviewPreferences}
             onRunReport={handleRunDailyReport}
             onPushFeishu={handlePushDailyReportFeishu}
           />
